@@ -1,0 +1,59 @@
+# Data files (too large for git)
+data/raw/*.csv
+data/raw/*.json
+data/raw/*.parquet
+data/processed/*.csv
+data/processed/*.json
+data/processed/*.parquet
+*.zip
+*.tar.gz
+
+# Image datasets
+data/raw/images/
+data/processed/images/
+
+# Model weights and artifacts
+models/*/saved_model/*.joblib
+models/*/saved_model/*.pkl
+models/*/saved_model/*.h5
+models/*/saved_model/*.keras
+models/*/saved_model/*.safetensors
+models/*/saved_model/*.bin
+models/*/saved_model/*.onnx
+
+# Test data (provided by instructor)
+test_data/*.csv
+test_data/*.json
+test_data/images/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+venv/
+env/
+.env
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Logs
+*.log
+wandb/
+runs/

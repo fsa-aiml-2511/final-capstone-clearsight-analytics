@@ -1,0 +1,4 @@
+id,predicted_class,confidence
+1001,Category_A,0.89
+1002,Category_B,0.76
+1003,Category_A,0.93
