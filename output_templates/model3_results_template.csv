@@ -1,0 +1,4 @@
+image_id,predicted_class,confidence
+img_0001.png,1,0.87
+img_0002.png,0,0.95
+img_0003.png,1,0.62

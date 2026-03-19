@@ -1,0 +1,4 @@
+id,prediction,confidence,metric_name,metric_value
+1001,high_risk,0.88,custom_metric,0.82
+1002,low_risk,0.92,custom_metric,0.82
+1003,medium_risk,0.71,custom_metric,0.82
