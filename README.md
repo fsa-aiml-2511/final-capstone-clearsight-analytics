@@ -168,7 +168,7 @@ No manual steps. No "you need to run this notebook first." No "change this path.
 | Data Engineering Lead | | |
 | ML / DNN Lead |Francisco Molina | Frankmo89 |
 | CNN Lead | | |
-| NLP Lead | | |
+| NLP Lead | Wesley Houk | wesleyhouk |
 
 ---
 
