@@ -57,3 +57,4 @@ env/
 *.log
 wandb/
 runs/
+data/raw/healthcare_retinal_images/
