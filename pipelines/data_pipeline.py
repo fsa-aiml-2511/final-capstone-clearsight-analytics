@@ -67,6 +67,7 @@ def load_and_clean(filepath: str) -> pd.DataFrame:
     print(f"Loaded and cleaned: {len(df)} rows, {len(df.columns)} columns")
     return df
 
+
 # =============================================================================
 # STEP 2: Feature Engineering
 # =============================================================================
@@ -102,14 +103,12 @@ def categorize_icd9(code) -> str:
         return 'other'
 
 
-def engineer_features(df: pd.DataFrame, encoders=None):
-        
+def engineer_features(df: pd.DataFrame, preprocessing_state=None):
     """
     Create all engineered features for Models 1 & 2.
     Must work on both training data and unseen test data.
     """
     # --- Medication features ---
-    
     med_cols = ['metformin', 'repaglinide', 'nateglinide', 'chlorpropamide',
                 'glimepiride', 'acetohexamide', 'glipizide', 'glyburide',
                 'tolbutamide', 'pioglitazone', 'rosiglitazone', 'acarbose',
@@ -171,16 +170,28 @@ def engineer_features(df: pd.DataFrame, encoders=None):
     cat_cols = df.select_dtypes(include='object').columns.tolist()
     cat_cols = [c for c in cat_cols if c not in ['readmitted']]
 
-    if encoders is None:
-        # TRAINING MODE: fit new encoders and return them
+    if preprocessing_state is None:
+        # TRAINING MODE: fit new encoders and save medians
         encoders = {}
         for col in cat_cols:
             df[col] = df[col].fillna('Unknown')
             le = LabelEncoder()
             df[col] = le.fit_transform(df[col])
             encoders[col] = le
+
+        # Save medians from training data for consistent imputation
+        medians = {}
+        for col in df.select_dtypes(include='number').columns:
+            if df[col].isna().any():
+                medians[col] = df[col].median()
+                df[col] = df[col].fillna(medians[col])
+
+        preprocessing_state = {'encoders': encoders, 'medians': medians}
     else:
-        # PREDICTION MODE: use existing encoders from training
+        # PREDICTION MODE: use saved encoders and medians
+        encoders = preprocessing_state['encoders']
+        medians = preprocessing_state['medians']
+
         for col in cat_cols:
             df[col] = df[col].fillna('Unknown')
             if col in encoders:
@@ -189,13 +200,17 @@ def engineer_features(df: pd.DataFrame, encoders=None):
             else:
                 df[col] = 0
 
-    # --- Fill any remaining NaN with median per column ---
-    for col in df.select_dtypes(include='number').columns:
-        if df[col].isna().any():
-            df[col] = df[col].fillna(df[col].median())
+        # Fill NaN using training medians (not test medians)
+        for col, median_val in medians.items():
+            if col in df.columns and df[col].isna().any():
+                df[col] = df[col].fillna(median_val)
+
+    # Fill any column still missing (edge case) with 0
+    df.fillna(0, inplace=True)
 
     print(f"Feature engineering complete: {len(df.columns)} columns")
-    return df, encoders
+    return df, preprocessing_state
+
 
 # =============================================================================
 # STEP 3: Split Data
@@ -227,27 +242,26 @@ def prepare_training_data(filepath: str):
     Run the full pipeline: load → clean → engineer → split.
     Used by train.py for both Model 1 and Model 2.
 
-    Returns: X_train, X_val, y_train, y_val, encoders
+    Returns: X_train, X_val, y_train, y_val, preprocessing_state
     """
     df = load_and_clean(filepath)
-    df, encoders = engineer_features(df)
+    df, preprocessing_state = engineer_features(df)
     X_train, X_val, y_train, y_val = split_data(df)
-    return X_train, X_val, y_train, y_val, encoders
+    return X_train, X_val, y_train, y_val, preprocessing_state
 
 
-def prepare_test_data(filepath: str, encoders: dict):
+def prepare_test_data(filepath: str, preprocessing_state: dict):
     """
     Run the pipeline WITHOUT splitting (for predict.py on unseen data).
-    Uses encoders fitted during training for consistent encoding.
+    Uses preprocessing_state from training for consistent encoding and imputation.
 
     Returns the full feature matrix ready for prediction.
     """
     df = load_and_clean(filepath)
-    df, _ = engineer_features(df, encoders=encoders)
+    df, _ = engineer_features(df, preprocessing_state=preprocessing_state)
 
     if 'readmission_binary' in df.columns:
         df.drop(columns=['readmission_binary'], inplace=True)
 
     print(f"Test data prepared: {len(df)} rows, {len(df.columns)} columns")
     return df
-
