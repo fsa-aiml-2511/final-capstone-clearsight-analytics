@@ -102,12 +102,14 @@ def categorize_icd9(code) -> str:
         return 'other'
 
 
-def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
+def engineer_features(df: pd.DataFrame, encoders=None):
+        
     """
     Create all engineered features for Models 1 & 2.
     Must work on both training data and unseen test data.
     """
     # --- Medication features ---
+    
     med_cols = ['metformin', 'repaglinide', 'nateglinide', 'chlorpropamide',
                 'glimepiride', 'acetohexamide', 'glipizide', 'glyburide',
                 'tolbutamide', 'pioglitazone', 'rosiglitazone', 'acarbose',
@@ -167,19 +169,33 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
 
     # --- Encode remaining categorical columns ---
     cat_cols = df.select_dtypes(include='object').columns.tolist()
-    # Remove target-related columns if present
     cat_cols = [c for c in cat_cols if c not in ['readmitted']]
 
-    for col in cat_cols:
-        df[col] = df[col].fillna('Unknown')
-        le = LabelEncoder()
-        df[col] = le.fit_transform(df[col])
+    if encoders is None:
+        # TRAINING MODE: fit new encoders and return them
+        encoders = {}
+        for col in cat_cols:
+            df[col] = df[col].fillna('Unknown')
+            le = LabelEncoder()
+            df[col] = le.fit_transform(df[col])
+            encoders[col] = le
+    else:
+        # PREDICTION MODE: use existing encoders from training
+        for col in cat_cols:
+            df[col] = df[col].fillna('Unknown')
+            if col in encoders:
+                le = encoders[col]
+                df[col] = df[col].apply(lambda x: le.transform([x])[0] if x in le.classes_ else -1)
+            else:
+                df[col] = 0
 
-    # --- Fill any remaining NaN with 0 ---
-    df.fillna(0, inplace=True)
+    # --- Fill any remaining NaN with median per column ---
+    for col in df.select_dtypes(include='number').columns:
+        if df[col].isna().any():
+            df[col] = df[col].fillna(df[col].median())
 
     print(f"Feature engineering complete: {len(df.columns)} columns")
-    return df
+    return df, encoders
 
 # =============================================================================
 # STEP 3: Split Data
@@ -211,28 +227,27 @@ def prepare_training_data(filepath: str):
     Run the full pipeline: load → clean → engineer → split.
     Used by train.py for both Model 1 and Model 2.
 
-    Returns: X_train, X_val, y_train, y_val
+    Returns: X_train, X_val, y_train, y_val, encoders
     """
     df = load_and_clean(filepath)
-    df = engineer_features(df)
+    df, encoders = engineer_features(df)
     X_train, X_val, y_train, y_val = split_data(df)
-    return X_train, X_val, y_train, y_val
+    return X_train, X_val, y_train, y_val, encoders
 
 
-def prepare_test_data(filepath: str):
+def prepare_test_data(filepath: str, encoders: dict):
     """
     Run the pipeline WITHOUT splitting (for predict.py on unseen data).
+    Uses encoders fitted during training for consistent encoding.
+
     Returns the full feature matrix ready for prediction.
     """
     df = load_and_clean(filepath)
-    # Save encounter_id before cleaning if needed for output
-    df = engineer_features(df)
+    df, _ = engineer_features(df, encoders=encoders)
 
-    # Remove target if present (test data might not have it)
     if 'readmission_binary' in df.columns:
         df.drop(columns=['readmission_binary'], inplace=True)
 
     print(f"Test data prepared: {len(df)} rows, {len(df.columns)} columns")
     return df
 
-    
