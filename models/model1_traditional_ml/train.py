@@ -2,121 +2,163 @@
 """
 Model 1: Traditional ML — Training Script
 ===========================================
-Train a classical ML model (XGBoost, Random Forest, etc.) on your scenario's
-tabular data.
+XGBoost classifier for hospital readmission prediction.
+Includes SMOTE for class imbalance and SHAP for interpretability.
 
-IMPORTANT: This model must be interpretable. Include SHAP or feature importance
-analysis so stakeholders can understand WHY the model makes its predictions.
+Usage: python models/model1_traditional_ml/train.py
 """
+import sys
+import joblib
+import numpy as np
+import matplotlib.pyplot as plt
 from pathlib import Path
+from xgboost import XGBClassifier
+from sklearn.metrics import classification_report, roc_auc_score, confusion_matrix, ConfusionMatrixDisplay
+from imblearn.over_sampling import SMOTE
+import shap
 
-PROCESSED_DATA = Path("data/processed/")
-SAVED_MODEL_DIR = Path("models/model1_traditional_ml/saved_model/")
+# Add project root to path so we can import the pipeline
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(PROJECT_ROOT))
+from pipelines.data_pipeline import prepare_training_data
 
-
-def load_data():
-    """Load preprocessed data from data/processed/.
-
-    Use the shared pipeline:
-        from pipelines.data_pipeline import load_processed_data
-        df = load_processed_data()
-    """
-    # TODO: Load your preprocessed dataset
-    raise NotImplementedError
-
-
-def preprocess_features(df):
-    """Select and prepare features for training.
-
-    Consider:
-    - Feature selection (drop leaky or irrelevant columns)
-    - Encoding categorical variables
-    - Scaling numerical features
-    - Handling missing values
-    """
-    # TODO: Prepare your feature matrix X and target y
-    raise NotImplementedError
+# Paths
+DATA_PATH = PROJECT_ROOT / "data" / "raw" / "patient_encounters_2023.csv"
+SAVED_MODEL_DIR = Path(__file__).resolve().parent / "saved_model"
 
 
-def train_model(X_train, y_train):
-    """Train your traditional ML model.
+def train():
+    """Full training pipeline: load data, SMOTE, train XGBoost, evaluate, SHAP, save."""
 
-    Recommended algorithms:
-        from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
-        from xgboost import XGBClassifier
+    # =========================================================================
+    # STEP 1: Load and prepare data using shared pipeline
+    # =========================================================================
+    print("=" * 60)
+    print("STEP 1: Loading and preparing data")
+    print("=" * 60)
+    X_train, X_val, y_train, y_val, preprocessing_state = prepare_training_data(str(DATA_PATH))
 
-    IMPORTANT: Handle class imbalance!
-        model = RandomForestClassifier(class_weight='balanced')
-    """
-    # TODO: Train your model
-    raise NotImplementedError
+    # =========================================================================
+    # STEP 2: Apply SMOTE to handle class imbalance
+    # =========================================================================
+    print("\n" + "=" * 60)
+    print("STEP 2: Applying SMOTE for class imbalance")
+    print("=" * 60)
+    print(f"Before SMOTE: {y_train.value_counts().to_dict()}")
 
+    sm = SMOTE(random_state=42)
+    X_train_res, y_train_res = sm.fit_resample(X_train, y_train)
 
-def evaluate_model(model, X_val, y_val):
-    """Evaluate model performance on validation data.
+    print(f"After SMOTE:  {dict(zip(*np.unique(y_train_res, return_counts=True)))}")
 
-    Must include:
-    - Classification report (precision, recall, F1 per class)
-    - Confusion matrix
-    - Weighted F1 score (primary metric for imbalanced data)
-    - AUC-ROC (for binary classification scenarios)
-    """
-    # TODO: Print evaluation metrics
-    raise NotImplementedError
+    # =========================================================================
+    # STEP 3: Train XGBoost with Early Stopping
+    # =========================================================================
+    print("\n" + "=" * 60)
+    print("STEP 3: Training XGBoost")
+    print("=" * 60)
 
+    model = XGBClassifier(
+        n_estimators=300,
+        max_depth=6,
+        learning_rate=0.1,
+        subsample=0.8,
+        colsample_bytree=0.8,
+        random_state=42,
+        eval_metric='auc',
+        use_label_encoder=False,
+        early_stopping_rounds=15,
+    )
 
-def explain_model(model, X_val):
-    """Generate SHAP or feature importance analysis.
+    model.fit(
+        X_train_res, y_train_res,
+        eval_set=[(X_val, y_val)],
+        verbose=50,
+    )
 
-    This is REQUIRED — your model must be interpretable.
+    # =========================================================================
+    # STEP 4: Evaluate on validation set
+    # =========================================================================
+    print("\n" + "=" * 60)
+    print("STEP 4: Evaluation on validation set")
+    print("=" * 60)
 
-    Option 1 — SHAP (recommended):
-        import shap
-        explainer = shap.TreeExplainer(model)
-        shap_values = explainer.shap_values(X_val)
-        shap.summary_plot(shap_values, X_val)
+    y_pred = model.predict(X_val)
+    y_proba = model.predict_proba(X_val)[:, 1]
 
-    Option 2 — Built-in feature importance:
-        importances = model.feature_importances_
-        # Plot top 15 features
-    """
-    # TODO: Generate explainability analysis
-    raise NotImplementedError
+    # Classification report
+    print("\nClassification Report:")
+    print(classification_report(y_val, y_pred, target_names=['Not Readmitted', 'Readmitted']))
 
+    # AUC-ROC
+    auc = roc_auc_score(y_val, y_proba)
+    print(f"AUC-ROC: {auc:.4f}")
 
-def save_model(model):
-    """Save the trained model to saved_model/.
+    if auc >= 0.80:
+        print(">>> STRETCH GOAL REACHED!")
+    elif auc >= 0.70:
+        print(">>> Minimum benchmark passed.")
+    else:
+        print(">>> WARNING: Below minimum benchmark of 0.70")
 
-    Example:
-        import joblib
-        SAVED_MODEL_DIR.mkdir(parents=True, exist_ok=True)
-        joblib.dump(model, SAVED_MODEL_DIR / "model.joblib")
-    """
-    # TODO: Save your model
-    raise NotImplementedError
+    # Confusion matrix
+    cm = confusion_matrix(y_val, y_pred)
+    disp = ConfusionMatrixDisplay(cm, display_labels=['Not Readmitted', 'Readmitted'])
+    disp.plot(cmap='Blues')
+    plt.title(f'Model 1 — XGBoost Confusion Matrix (AUC: {auc:.4f})')
+    plt.tight_layout()
+    plt.savefig(SAVED_MODEL_DIR / 'confusion_matrix.png', dpi=150)
+    plt.close()
+    print("Confusion matrix saved to saved_model/confusion_matrix.png")
 
+    # =========================================================================
+    # STEP 5: SHAP Interpretability (REQUIRED)
+    # =========================================================================
+    print("\n" + "=" * 60)
+    print("STEP 5: SHAP Feature Importance (Required)")
+    print("=" * 60)
 
-def main():
-    # 1. Load data
-    df = load_data()
+    explainer = shap.TreeExplainer(model)
+    # Use a sample for speed (SHAP on 20k rows is slow)
+    X_sample = X_val.sample(n=min(2000, len(X_val)), random_state=42)
+    shap_values = explainer.shap_values(X_sample)
 
-    # 2. Preprocess features
-    # X_train, X_val, y_train, y_val = preprocess_features(df)
+    # Summary plot (top 15 features)
+    plt.figure()
+    shap.summary_plot(shap_values, X_sample, max_display=15, show=False)
+    plt.tight_layout()
+    plt.savefig(SAVED_MODEL_DIR / 'shap_summary.png', dpi=150, bbox_inches='tight')
+    plt.close()
+    print("SHAP summary plot saved to saved_model/shap_summary.png")
 
-    # 3. Train model
-    # model = train_model(X_train, y_train)
+    # Bar plot (feature importance ranking)
+    plt.figure()
+    shap.summary_plot(shap_values, X_sample, plot_type='bar', max_display=15, show=False)
+    plt.tight_layout()
+    plt.savefig(SAVED_MODEL_DIR / 'shap_bar.png', dpi=150, bbox_inches='tight')
+    plt.close()
+    print("SHAP bar plot saved to saved_model/shap_bar.png")
 
-    # 4. Evaluate
-    # evaluate_model(model, X_val, y_val)
+    # =========================================================================
+    # STEP 6: Save model and preprocessing state
+    # =========================================================================
+    print("\n" + "=" * 60)
+    print("STEP 6: Saving model and preprocessing state")
+    print("=" * 60)
 
-    # 5. Explain — REQUIRED
-    # explain_model(model, X_val)
+    SAVED_MODEL_DIR.mkdir(parents=True, exist_ok=True)
+    joblib.dump(model, SAVED_MODEL_DIR / 'model.joblib')
+    joblib.dump(preprocessing_state, SAVED_MODEL_DIR / 'preprocessing_state.joblib')
+    joblib.dump(list(X_train.columns), SAVED_MODEL_DIR / 'feature_names.joblib')
 
-    # 6. Save
-    # save_model(model)
+    print(f"Model saved to {SAVED_MODEL_DIR / 'model.joblib'}")
+    print(f"Preprocessing state saved to {SAVED_MODEL_DIR / 'preprocessing_state.joblib'}")
+    print(f"Feature names saved to {SAVED_MODEL_DIR / 'feature_names.joblib'}")
 
-    print("Training complete!")
+    print("\n" + "=" * 60)
+    print(f"TRAINING COMPLETE — AUC-ROC: {auc:.4f}")
+    print("=" * 60)
 
 
 if __name__ == "__main__":
-    main()
+    train()
