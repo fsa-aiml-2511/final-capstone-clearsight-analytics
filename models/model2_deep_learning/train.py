@@ -2,132 +2,215 @@
 """
 Model 2: Deep Learning — Training Script
 ==========================================
-Train a deep neural network on the same tabular data as Model 1.
-Compare performance against your traditional ML model.
+TensorFlow/Keras DNN for hospital readmission prediction.
+Same data as Model 1 — compare DNN vs XGBoost performance.
 
-Framework: TensorFlow / Keras
+Usage: python models/model2_deep_learning/train.py
 """
+import sys
+import joblib
+import numpy as np
+import matplotlib.pyplot as plt
 from pathlib import Path
 
-PROCESSED_DATA = Path("data/processed/")
-SAVED_MODEL_DIR = Path("models/model2_deep_learning/saved_model/")
+import tensorflow as tf
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense, Dropout, BatchNormalization
+from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
+from tensorflow.keras.optimizers import Adam
+from sklearn.metrics import classification_report, roc_auc_score, confusion_matrix, ConfusionMatrixDisplay
+from sklearn.preprocessing import StandardScaler
+from sklearn.utils.class_weight import compute_class_weight
+
+# Add project root to path so we can import the pipeline
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(PROJECT_ROOT))
+from pipelines.data_pipeline import prepare_training_data
+
+# Paths
+DATA_PATH = PROJECT_ROOT / "data" / "raw" / "patient_encounters_2023.csv"
+SAVED_MODEL_DIR = Path(__file__).resolve().parent / "saved_model"
 
 
-def load_data():
-    """Load preprocessed data from data/processed/.
+def train():
+    """Full training pipeline: load data, scale, train DNN, evaluate, save."""
 
-    Use the shared pipeline:
-        from pipelines.data_pipeline import load_processed_data
-        df = load_processed_data()
-    """
-    # TODO: Load your preprocessed dataset
-    raise NotImplementedError
+    # =========================================================================
+    # STEP 1: Load and prepare data using shared pipeline
+    # =========================================================================
+    print("=" * 60)
+    print("STEP 1: Loading and preparing data")
+    print("=" * 60)
+    X_train, X_val, y_train, y_val, preprocessing_state = prepare_training_data(str(DATA_PATH))
 
+    # =========================================================================
+    # STEP 2: Scale features (required for neural networks)
+    # =========================================================================
+    print("\n" + "=" * 60)
+    print("STEP 2: Scaling features")
+    print("=" * 60)
 
-def preprocess_features(df):
-    """Prepare features for neural network training.
+    scaler = StandardScaler()
+    X_train_scaled = scaler.fit_transform(X_train)
+    X_val_scaled = scaler.transform(X_val)
 
-    DNN-specific considerations:
-    - Scale all features to [0,1] or standardize (mean=0, std=1)
-    - One-hot encode categoricals (or use embedding layers)
-    - Convert to numpy arrays or tf.data.Dataset
-    """
-    # TODO: Prepare your feature matrix X and target y
-    raise NotImplementedError
+    print(f"Features scaled: {X_train_scaled.shape[1]} columns")
 
+    # =========================================================================
+    # STEP 3: Compute class weights for imbalance
+    # =========================================================================
+    print("\n" + "=" * 60)
+    print("STEP 3: Computing class weights for imbalance")
+    print("=" * 60)
 
-def build_model(input_dim, num_classes):
-    """Define your neural network architecture.
+    cw = compute_class_weight('balanced', classes=np.array([0, 1]), y=y_train)
+    class_weight = {0: cw[0], 1: cw[1]}
+    print(f"Class weights: {class_weight}")
 
-    Example:
-        import tensorflow as tf
+    # =========================================================================
+    # STEP 4: Build DNN architecture
+    # =========================================================================
+    print("\n" + "=" * 60)
+    print("STEP 4: Building DNN architecture")
+    print("=" * 60)
 
-        model = tf.keras.Sequential([
-            tf.keras.layers.Dense(128, activation='relu', input_shape=(input_dim,)),
-            tf.keras.layers.Dropout(0.3),
-            tf.keras.layers.Dense(64, activation='relu'),
-            tf.keras.layers.Dropout(0.3),
-            tf.keras.layers.Dense(num_classes, activation='softmax'),
-        ])
-        model.compile(
-            optimizer='adam',
-            loss='sparse_categorical_crossentropy',
-            metrics=['accuracy'],
-        )
-        return model
+    input_dim = X_train_scaled.shape[1]
 
-    IMPORTANT: For class imbalance, use class_weight parameter in model.fit()
-    or use a weighted loss function.
-    """
-    # TODO: Build your neural network
-    raise NotImplementedError
+    model = Sequential([
+        Dense(256, activation='relu', input_shape=(input_dim,)),
+        BatchNormalization(),
+        Dropout(0.4),
 
+        Dense(128, activation='relu'),
+        BatchNormalization(),
+        Dropout(0.3),
 
-def train_model(model, X_train, y_train, X_val, y_val):
-    """Train the model with early stopping.
+        Dense(64, activation='relu'),
+        Dropout(0.2),
 
-    Example:
-        from tensorflow.keras.callbacks import EarlyStopping
+        Dense(1, activation='sigmoid'),
+    ])
 
-        early_stop = EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True)
-        history = model.fit(
-            X_train, y_train,
-            validation_data=(X_val, y_val),
-            epochs=100,
-            batch_size=32,
-            callbacks=[early_stop],
-            class_weight=class_weights,  # Handle imbalance!
-        )
-    """
-    # TODO: Train your model
-    raise NotImplementedError
+    model.compile(
+        optimizer=Adam(learning_rate=0.001),
+        loss='binary_crossentropy',
+        metrics=['accuracy', tf.keras.metrics.AUC(name='auc')],
+    )
 
+    model.summary()
 
-def evaluate_model(model, X_val, y_val):
-    """Evaluate and compare against Model 1.
+    # =========================================================================
+    # STEP 5: Train with early stopping
+    # =========================================================================
+    print("\n" + "=" * 60)
+    print("STEP 5: Training DNN")
+    print("=" * 60)
 
-    Must include:
-    - Classification report
-    - Weighted F1 score
-    - Training curves (loss and accuracy over epochs)
-    - Comparison table: Model 1 vs Model 2 metrics
-    """
-    # TODO: Print evaluation metrics
-    raise NotImplementedError
+    callbacks = [
+        EarlyStopping(
+            monitor='val_auc',
+            patience=15,
+            restore_best_weights=True,
+            mode='max',
+        ),
+        ReduceLROnPlateau(
+            monitor='val_auc',
+            mode='max',
+            patience=7,
+            factor=0.5,
+            min_lr=1e-6,
+        ),
+    ]
 
+    history = model.fit(
+        X_train_scaled, y_train,
+        validation_data=(X_val_scaled, y_val),
+        epochs=100,
+        batch_size=64,
+        callbacks=callbacks,
+        class_weight=class_weight,
+        verbose=1,
+    )
 
-def save_model(model):
-    """Save the trained model to saved_model/.
+    # =========================================================================
+    # STEP 6: Evaluate on validation set
+    # =========================================================================
+    print("\n" + "=" * 60)
+    print("STEP 6: Evaluation on validation set")
+    print("=" * 60)
 
-    Example:
-        SAVED_MODEL_DIR.mkdir(parents=True, exist_ok=True)
-        model.save(SAVED_MODEL_DIR / "model.keras")
-    """
-    # TODO: Save your model
-    raise NotImplementedError
+    y_proba = model.predict(X_val_scaled).flatten()
+    y_pred = (y_proba >= 0.5).astype(int)
 
+    # Classification report
+    print("\nClassification Report:")
+    print(classification_report(y_val, y_pred, target_names=['Not Readmitted', 'Readmitted']))
 
-def main():
-    # 1. Load data
-    df = load_data()
+    # AUC-ROC
+    auc = roc_auc_score(y_val, y_proba)
+    print(f"AUC-ROC: {auc:.4f}")
 
-    # 2. Preprocess features
-    # X_train, X_val, y_train, y_val = preprocess_features(df)
+    if auc >= 0.80:
+        print(">>> STRETCH GOAL REACHED!")
+    elif auc >= 0.70:
+        print(">>> Minimum benchmark passed.")
+    else:
+        print(">>> WARNING: Below minimum benchmark of 0.70")
 
-    # 3. Build model
-    # model = build_model(input_dim=X_train.shape[1], num_classes=4)
+    # Confusion matrix
+    cm = confusion_matrix(y_val, y_pred)
+    disp = ConfusionMatrixDisplay(cm, display_labels=['Not Readmitted', 'Readmitted'])
+    disp.plot(cmap='Blues')
+    plt.title(f'Model 2 — DNN Confusion Matrix (AUC: {auc:.4f})')
+    plt.tight_layout()
+    plt.savefig(SAVED_MODEL_DIR / 'confusion_matrix.png', dpi=150)
+    plt.close()
+    print("Confusion matrix saved to saved_model/confusion_matrix.png")
 
-    # 4. Train
-    # train_model(model, X_train, y_train, X_val, y_val)
+    # Training curves
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
 
-    # 5. Evaluate and compare to Model 1
-    # evaluate_model(model, X_val, y_val)
+    axes[0].plot(history.history['loss'], label='Train Loss')
+    axes[0].plot(history.history['val_loss'], label='Val Loss')
+    axes[0].set_title('Loss Over Epochs')
+    axes[0].set_xlabel('Epoch')
+    axes[0].set_ylabel('Loss')
+    axes[0].legend()
 
-    # 6. Save
-    # save_model(model)
+    axes[1].plot(history.history['auc'], label='Train AUC')
+    axes[1].plot(history.history['val_auc'], label='Val AUC')
+    axes[1].set_title('AUC-ROC Over Epochs')
+    axes[1].set_xlabel('Epoch')
+    axes[1].set_ylabel('AUC')
+    axes[1].legend()
 
-    print("Training complete!")
+    plt.tight_layout()
+    plt.savefig(SAVED_MODEL_DIR / 'training_curves.png', dpi=150)
+    plt.close()
+    print("Training curves saved to saved_model/training_curves.png")
+
+    # =========================================================================
+    # STEP 7: Save model, scaler, and preprocessing state
+    # =========================================================================
+    print("\n" + "=" * 60)
+    print("STEP 7: Saving model and artifacts")
+    print("=" * 60)
+
+    SAVED_MODEL_DIR.mkdir(parents=True, exist_ok=True)
+    model.save(SAVED_MODEL_DIR / 'model.keras')
+    joblib.dump(scaler, SAVED_MODEL_DIR / 'scaler.joblib')
+    joblib.dump(preprocessing_state, SAVED_MODEL_DIR / 'preprocessing_state.joblib')
+    joblib.dump(list(X_train.columns), SAVED_MODEL_DIR / 'feature_names.joblib')
+
+    print(f"Model saved to {SAVED_MODEL_DIR / 'model.keras'}")
+    print(f"Scaler saved to {SAVED_MODEL_DIR / 'scaler.joblib'}")
+    print(f"Preprocessing state saved to {SAVED_MODEL_DIR / 'preprocessing_state.joblib'}")
+    print(f"Feature names saved to {SAVED_MODEL_DIR / 'feature_names.joblib'}")
+
+    print("\n" + "=" * 60)
+    print(f"TRAINING COMPLETE — AUC-ROC: {auc:.4f}")
+    print("=" * 60)
 
 
 if __name__ == "__main__":
-    main()
+    train()
