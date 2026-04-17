@@ -23,13 +23,10 @@ def load_raw_data(filename):
     """Load a raw CSV file from data/raw/.
 
     Args:
-        filename: Name of the CSV file (e.g., "patient_encounters_2023.csv")
+        filename: Name of the CSV file (e.g., "patient_medication_feedback.csv")
 
     Returns:
         pandas DataFrame
-
-    Example:
-        df = load_raw_data("patient_encounters_2023.csv")
     """
     filepath = RAW_DATA_DIR / filename
     if not filepath.exists():
@@ -37,40 +34,45 @@ def load_raw_data(filename):
             f"Data file not found: {filepath}\n"
             f"Make sure you've downloaded the data to data/raw/"
         )
-    # TODO: Load and return the CSV
-    raise NotImplementedError
+    df = pd.read_csv(filepath)
+    print(f"Loaded {len(df)} rows from {filename}")
+    return df
 
 
 def clean_data(df):
-    """Apply common data cleaning steps.
+    """Clean the patient medication feedback dataset.
 
-    Things to handle:
-    - Missing value encoding (e.g., '?' -> NaN)
-    - Data type conversions
-    - Remove duplicates
-    - Drop irrelevant columns
+    - Drops rows missing the review text or target label
+    - Removes rows where the review text is empty/whitespace
+    - Resets the index
 
     Returns:
         Cleaned DataFrame
     """
-    # TODO: Add your cleaning logic
-    raise NotImplementedError
+    target_col = "effectiveness_3class"
+    text_col = "benefitsReview"
+
+    df = df.dropna(subset=[text_col, target_col])
+    df = df[df[text_col].str.strip().str.len() > 0]
+    df = df.reset_index(drop=True)
+
+    print(f"After cleaning: {len(df)} rows")
+    print(df[target_col].value_counts())
+    return df
 
 
 def engineer_features(df):
-    """Create new features from existing columns.
+    """Add derived features useful for analysis alongside the NLP model.
 
-    Examples:
-    - Parse datetime columns -> hour, day_of_week, month
-    - Create binary flags from categorical data
-    - Bin continuous variables into categories
-    - Interaction features
+    - review_word_count: number of words in the review
+    - review_char_count: number of characters in the review
 
     Returns:
-        DataFrame with new feature columns
+        DataFrame with added feature columns
     """
-    # TODO: Add your feature engineering
-    raise NotImplementedError
+    df["review_word_count"] = df["benefitsReview"].str.split().str.len()
+    df["review_char_count"] = df["benefitsReview"].str.len()
+    return df
 
 
 def split_data(X, y, test_size=0.2, random_state=42):

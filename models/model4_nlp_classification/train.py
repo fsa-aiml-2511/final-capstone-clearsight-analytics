@@ -2,110 +2,180 @@
 """
 Model 4: NLP Classification — Training Script
 ===============================================
-Train a text classification model on your scenario's text data.
-
-Approaches (pick one):
-- TF-IDF + traditional classifier (simplest, often surprisingly good)
-- LSTM / GRU neural network
-- Fine-tuned transformer (BERT, DistilBERT)
-
-IMPORTANT: Save your vectorizer/tokenizer alongside the model — you'll need
-the same text preprocessing at prediction time.
+Train a text classification model on patient medication feedback.
 """
+
+APPROACH = "tfidf"
+# APPROACH = "embed"
+if APPROACH == "tfidf":
+    from sklearn.feature_extraction.text import TfidfVectorizer
+    from sklearn.linear_model import LogisticRegression
+
+else:
+    import tensorflow as tf
+    from sklearn.preprocessing import LabelEncoder
+    from tensorflow.keras.preprocessing.text import Tokenizer
+    from tensorflow.keras.preprocessing.sequence import pad_sequences
+
+import sys
+import pandas as pd
 from pathlib import Path
+import joblib
+import seaborn as sns
+import matplotlib.pyplot as plt
+from sklearn.metrics import classification_report, f1_score, confusion_matrix
+from sklearn.model_selection import train_test_split
 
-PROCESSED_DATA = Path("data/processed/")
-SAVED_MODEL_DIR = Path("models/model4_nlp_classification/saved_model/")
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(PROJECT_ROOT))
 
+from pipelines.data_pipeline_wes import load_raw_data, clean_data, engineer_features
 
-def load_data():
-    """Load text data from data/processed/.
+SAVED_MODEL_DIR = PROJECT_ROOT / "models" / "model4_nlp_classification" / "saved_model"
+TARGET_COL = "effectiveness_3class"
 
-    Use the shared pipeline:
-        from pipelines.data_pipeline import load_processed_data
-        df = load_processed_data()
-    """
-    # TODO: Load your text dataset
-    raise NotImplementedError
+def load_data() -> pd.DataFrame:
+    """Load and clean the patient medication feedback dataset via the shared pipeline."""
+    df = load_raw_data("patient_medication_feedback.csv")
+    df = clean_data(df)
+    df = engineer_features(df)
+    return df
 
 
 def preprocess_text(texts):
     """Clean and prepare text for modeling.
 
-    Common steps:
-    - Lowercase
-    - Remove special characters, HTML tags
-    - Handle abbreviations and slang
-    - Tokenize
-    - Remove stopwords (optional — sometimes they help)
-
-    IMPORTANT: Apply the SAME preprocessing at prediction time.
+    Returns a list of cleaned strings ready for vectorization.
+    Apply the SAME function at prediction time.
     """
-    # TODO: Clean your text data
-    raise NotImplementedError
+    import re
+
+    cleaned = []
+    for text in texts:
+        text = str(text).lower()
+        text = text.replace("\n", " ")
+        text = re.sub(r"[^a-z\s]", " ", text)
+        text = re.sub(r"\s+", " ", text).strip()
+        cleaned.append(text)
+    return cleaned
 
 
-def vectorize_text(texts):
-    """Convert text to numerical features.
+def vectorize_text(texts, max_words=10000, max_len=200):
+    """Convert text to numerical features using the selected APPROACH.
 
-    Option 1 — TF-IDF (simplest):
-        from sklearn.feature_extraction.text import TfidfVectorizer
-        vectorizer = TfidfVectorizer(max_features=10000, ngram_range=(1, 2))
+    Returns (X, preprocessor) where preprocessor is the vectorizer or tokenizer.
+    """
+    if APPROACH == "tfidf":
+        vectorizer = TfidfVectorizer(max_features=max_words, ngram_range=(1, 2))
         X = vectorizer.fit_transform(texts)
-        # Save vectorizer! You need it at prediction time.
-        joblib.dump(vectorizer, SAVED_MODEL_DIR / "vectorizer.joblib")
 
-    Option 2 — Embeddings (for neural network approaches):
-        from tensorflow.keras.preprocessing.text import Tokenizer
-        tokenizer = Tokenizer(num_words=10000)
-        tokenizer.fit_on_texts(texts)
-    """
-    # TODO: Vectorize your text
-    raise NotImplementedError
-
-
-def train_model(X_train, y_train):
-    """Train your text classifier.
-
-    TF-IDF approach:
-        from sklearn.linear_model import LogisticRegression
-        model = LogisticRegression(class_weight='balanced', max_iter=1000)
-        model.fit(X_train, y_train)
-
-    Neural network approach:
-        import tensorflow as tf
-        model = tf.keras.Sequential([...])
-    """
-    # TODO: Train your model
-    raise NotImplementedError
-
-
-def evaluate_model(model, X_val, y_val):
-    """Evaluate NLP model performance.
-
-    Must include:
-    - Classification report per category
-    - Weighted F1 score
-    - Confusion matrix
-    - Example predictions with actual text
-    """
-    # TODO: Evaluate your model
-    raise NotImplementedError
-
-
-def save_model(model):
-    """Save model AND vectorizer/tokenizer.
-
-    IMPORTANT: You must save both the model and the text preprocessor.
-
-    Example:
-        import joblib
         SAVED_MODEL_DIR.mkdir(parents=True, exist_ok=True)
-        joblib.dump(model, SAVED_MODEL_DIR / "model.joblib")
         joblib.dump(vectorizer, SAVED_MODEL_DIR / "vectorizer.joblib")
+        print(f"TF-IDF matrix: {X.shape}")
+        return X, vectorizer
+
+    else:  # embed
+        tokenizer = Tokenizer(num_words=max_words, oov_token="<OOV>")
+        tokenizer.fit_on_texts(texts)
+        sequences = tokenizer.texts_to_sequences(texts)
+        X = pad_sequences(sequences, maxlen=max_len, padding="post", truncating="post")
+
+        SAVED_MODEL_DIR.mkdir(parents=True, exist_ok=True)
+        joblib.dump(tokenizer, SAVED_MODEL_DIR / "tokenizer.joblib")
+        print(f"Embedding matrix: {X.shape}")
+        return X, tokenizer
+
+
+def train_model(X_train, y_train, num_classes=3, vocab_size=10000, max_len=200):
+    """Train a classifier using the selected APPROACH.
+
+    Returns model for tfidf, or (model, label_encoder) for embed.
     """
-    # TODO: Save your model and vectorizer
-    raise NotImplementedError
+    if APPROACH == "tfidf":
+        model = LogisticRegression(class_weight="balanced", max_iter=1000, random_state=42)
+        model.fit(X_train, y_train)
+        print("Logistic Regression training complete.")
+        return model
+
+    else:  # embed
+        le = LabelEncoder()
+        y_encoded = le.fit_transform(y_train)
+        y_cat = tf.keras.utils.to_categorical(y_encoded, num_classes=num_classes)
+
+        model = tf.keras.Sequential([
+            tf.keras.layers.Embedding(input_dim=vocab_size, output_dim=64, input_length=max_len),
+            tf.keras.layers.SpatialDropout1D(0.2),
+            tf.keras.layers.LSTM(64, dropout=0.2, recurrent_dropout=0.2),
+            tf.keras.layers.Dense(32, activation="relu"),
+            tf.keras.layers.Dense(num_classes, activation="softmax"),
+        ])
+
+        model.compile(loss="categorical_crossentropy", optimizer="adam", metrics=["accuracy"])
+
+        early_stop = tf.keras.callbacks.EarlyStopping(
+            monitor="val_loss", patience=3, restore_best_weights=True
+        )
+
+        model.fit(
+            X_train, y_cat,
+            epochs=10,
+            batch_size=64,
+            validation_split=0.1,
+            callbacks=[early_stop],
+            verbose=1,
+        )
+        print("LSTM training complete.")
+        return model, le
+
+
+def evaluate_model(model, X_val, y_val, texts_val=None, le=None):
+    """Evaluate model performance using the selected APPROACH."""
+
+    if APPROACH == "tfidf":
+        y_pred = model.predict(X_val)
+        classes = model.classes_
+        y_true = y_val
+
+    else:  # embed
+        y_prob = model.predict(X_val, verbose=0)
+        y_pred = le.inverse_transform(y_prob.argmax(axis=1))
+        y_true = y_val
+        classes = le.classes_
+
+    print("\n--- Classification Report ---")
+    print(classification_report(y_true, y_pred))
+    print(f"Weighted F1 Score: {f1_score(y_true, y_pred, average='weighted'):.4f}")
+
+    cm = confusion_matrix(y_true, y_pred, labels=classes)
+    plt.figure(figsize=(7, 5))
+    sns.heatmap(cm, annot=True, fmt="d", xticklabels=classes, yticklabels=classes)
+    plt.title(f"Confusion Matrix — {APPROACH.upper()}")
+    plt.ylabel("Actual")
+    plt.xlabel("Predicted")
+    plt.tight_layout()
+    plt.show()
+
+    if texts_val is not None:
+        print("\n--- Example Predictions ---")
+        for text, actual, pred in zip(list(texts_val)[:5], list(y_true)[:5], list(y_pred)[:5]):
+            print(f"  Text:      {text[:80]}...")
+            print(f"  Actual:    {actual}")
+            print(f"  Predicted: {pred}\n")
+
+
+def save_model(model, preprocessor):
+    """Save model and vectorizer/tokenizer to saved_model/."""
+    SAVED_MODEL_DIR.mkdir(parents=True, exist_ok=True)
+
+    if APPROACH == "tfidf":
+        joblib.dump(model, SAVED_MODEL_DIR / "model.joblib")
+        joblib.dump(preprocessor, SAVED_MODEL_DIR / "vectorizer.joblib")
+        print(f"Saved model and vectorizer to {SAVED_MODEL_DIR}")
+
+    else:  # embed
+        model.save(SAVED_MODEL_DIR / "model.keras")
+        joblib.dump(preprocessor, SAVED_MODEL_DIR / "tokenizer.joblib")
+        print(f"Saved model and tokenizer to {SAVED_MODEL_DIR}")
 
 
 def main():
@@ -113,22 +183,30 @@ def main():
     df = load_data()
 
     # 2. Preprocess text
-    # texts = preprocess_text(df["text_column"])
+    texts = preprocess_text(df["benefitsReview"])
+    y = df[TARGET_COL]
 
     # 3. Vectorize
-    # X = vectorize_text(texts)
+    X, preprocessor = vectorize_text(texts)
 
-    # 4. Split (use stratified split for imbalanced classes)
-    # X_train, X_val, y_train, y_val = train_test_split(X, y, stratify=y)
+    # 4. Split (texts split alongside X/y so example predictions show actual review text)
+    X_train, X_val, y_train, y_val, _, texts_val = train_test_split(
+        X, y, texts, test_size=0.2, random_state=42, stratify=y
+    )
 
     # 5. Train
-    # model = train_model(X_train, y_train)
+    result = train_model(X_train, y_train)
 
     # 6. Evaluate
-    # evaluate_model(model, X_val, y_val)
+    if APPROACH == "tfidf":
+        model = result
+        evaluate_model(model, X_val, y_val, texts_val=texts_val)
+    else:
+        model, le = result
+        evaluate_model(model, X_val, y_val, texts_val=texts_val, le=le)
 
-    # 7. Save model + vectorizer
-    # save_model(model)
+    # 7. Save
+    save_model(model, preprocessor)
 
     print("Training complete!")
 
