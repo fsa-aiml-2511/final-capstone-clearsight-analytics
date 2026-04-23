@@ -51,10 +51,39 @@ def load_and_clean(filepath: str) -> pd.DataFrame:
     }
     df['age_numeric'] = df['age'].map(age_map)
 
-    # 5. Drop columns we won't use
+    # 5. Patient history features (computed BEFORE dropping patient_nbr)
+    # -------------------------------------------------------------------------
+    # encounter_id is sequential in time per UCI dataset documentation, so we
+    # sort by it to ensure each encounter only "sees" its actual past.
+    # cumcount() gives 0 for the first encounter, 1 for the second, etc.
+    # cumsum().shift(1) shifts so a row never includes itself.
+    # -------------------------------------------------------------------------
+    if 'patient_nbr' in df.columns and 'encounter_id' in df.columns:
+        df = df.sort_values('encounter_id').reset_index(drop=True)
+
+        # How many prior encounters does this patient have in the dataset?
+        df['prior_encounters_count'] = df.groupby('patient_nbr').cumcount()
+
+        # Binary flag: is this a recurrent patient?
+        df['is_recurrent_patient'] = (df['prior_encounters_count'] > 0).astype(int)
+
+        # Cumulative prior inpatient visits (strongest historical signal).
+        # shift(1) within group ensures we exclude the current row.
+        df['prior_inpatient_cumsum'] = (
+            df.groupby('patient_nbr')['number_inpatient']
+            .apply(lambda x: x.shift(1).cumsum())
+            .reset_index(level=0, drop=True)
+            .fillna(0)
+        )
+    else:
+        df['prior_encounters_count'] = 0
+        df['is_recurrent_patient'] = 0
+        df['prior_inpatient_cumsum'] = 0
+
+    # 6. Drop columns we won't use
     drop_cols = [
         'encounter_id',   # just an ID, not a feature
-        'patient_nbr',    # patient ID, not a feature
+        'patient_nbr',    # patient ID, not a feature (history features already computed)
         'weight',         # 97% missing
         'payer_code',     # 40% missing, not clinically useful
         'readmitted',     # replaced by readmission_binary
@@ -102,11 +131,97 @@ def categorize_icd9(code) -> str:
     else:
         return 'other'
 
+def bin_length_of_stay(days) -> int:
+    """
+    Bin time_in_hospital into clinical risk tiers.
+
+    Clinical rationale: length-of-stay risk curve is non-linear.
+    - 1-2 days: short stay, usually lower risk
+    - 3-5 days: standard stay
+    - 6+ days: extended stay, often signals complications or unstable patient
+    XGBoost can split on raw values, but the DNN (with StandardScaler)
+    benefits from explicit ordinal bins.
+    """
+    if pd.isna(days):
+        return 1  # default to mid tier
+    if days <= 2:
+        return 0
+    elif days <= 5:
+        return 1
+    else:
+        return 2
+
+
+
+def _target_encode_column(df, col, target_col='readmission_binary',
+                          preprocessing_state=None, state_key=None,
+                          n_splits=5, random_state=42):
+    """
+    Apply target encoding to a single column with out-of-fold CV to prevent leakage.
+
+    Training mode (preprocessing_state is None):
+        - Computes 5-fold out-of-fold means for training rows
+        - Stores the full target mean map + global mean for later use
+        - Returns modified df and updated state dict
+
+    Prediction mode (preprocessing_state provided):
+        - Applies the saved map, filling unseen categories with global mean
+
+    Args:
+        df: DataFrame with the column to encode
+        col: name of the column to encode (will be replaced by {col}_te)
+        target_col: target variable name
+        preprocessing_state: dict with saved encoders/maps (None during training)
+        state_key: key under which the map is saved in preprocessing_state
+        n_splits: CV folds for out-of-fold encoding (default 5)
+
+    Returns:
+        df with {col}_te added and original {col} dropped
+        encoding_info dict: {'map': {...}, 'global': float}
+    """
+    from sklearn.model_selection import KFold
+
+    # Ensure string type for consistent grouping (handles mix of int/str)
+    df[col] = df[col].fillna('Unknown').astype(str)
+
+    if preprocessing_state is None:
+        # TRAINING MODE: compute out-of-fold encoding
+        global_mean = df[target_col].mean()
+
+        # OOF encoding for training rows
+        kf = KFold(n_splits=n_splits, shuffle=True, random_state=random_state)
+        oof_encoded = pd.Series(index=df.index, dtype=float)
+        for train_idx, val_idx in kf.split(df):
+            fold_map = df.iloc[train_idx].groupby(col)[target_col].mean()
+            oof_encoded.iloc[val_idx] = (
+                df.iloc[val_idx][col].map(fold_map).fillna(global_mean)
+            )
+
+        # Full map for prediction time
+        full_map = df.groupby(col)[target_col].mean().to_dict()
+        df[f'{col}_te'] = oof_encoded
+        encoding_info = {'map': full_map, 'global': global_mean}
+    else:
+        # PREDICTION MODE: apply saved map
+        saved = preprocessing_state.get(state_key, {'map': {}, 'global': 0.5})
+        df[f'{col}_te'] = df[col].map(saved['map']).fillna(saved['global'])
+        encoding_info = saved
+
+    # Drop the raw column (replaced by _te version)
+    df.drop(columns=[col], inplace=True)
+    return df, encoding_info
+
 
 def engineer_features(df: pd.DataFrame, preprocessing_state=None):
     """
     Create all engineered features for Models 1 & 2.
     Must work on both training data and unseen test data.
+
+    Training mode (preprocessing_state=None): fits encoders, computes medians,
+    builds target encoding map, and returns the state dict.
+
+    Prediction mode (preprocessing_state provided): uses saved encoders,
+    medians, and target encoding map for consistent transforms.
     """
     # --- Medication features ---
     med_cols = ['metformin', 'repaglinide', 'nateglinide', 'chlorpropamide',
@@ -128,6 +243,10 @@ def engineer_features(df: pd.DataFrame, preprocessing_state=None):
     df['n_meds_decreased'] = df[med_cols].apply(
         lambda row: sum(1 for v in row if v == 'Down'), axis=1
     )
+
+    # NEW: insulin usage flag (captured before we drop the med columns)
+    #      Insulin is one of the strongest readmission predictors in literature.
+    df['on_insulin'] = (df['insulin'] != 'No').astype(int) if 'insulin' in df.columns else 0
 
     # Drop individual medication columns (replaced by aggregates)
     df.drop(columns=med_cols, inplace=True)
@@ -160,13 +279,108 @@ def engineer_features(df: pd.DataFrame, preprocessing_state=None):
         df['number_inpatient'].fillna(0) / 5
     )
 
+    # =========================================================================
+    # NEW ENHANCED FEATURES (FASE 1)
+    # =========================================================================
+
+    # --- Feature 1: Total prior hospital utilization ---
+    # Clinical rationale: captures overall healthcare system engagement.
+    # A patient with many prior visits of any type is systemically sicker.
+    df['total_prior_visits'] = (
+        df['number_outpatient'].fillna(0)
+        + df['number_emergency'].fillna(0)
+        + df['number_inpatient'].fillna(0)
+    )
+
+    # --- Feature 2: Service utilization ratio ---
+    # Clinical rationale: distinguishes patients who rely on ER/hospital
+    # (high-risk pattern) vs those with regular outpatient care (low-risk pattern).
+    # +1 in denominator avoids division by zero.
+    df['service_utilization_ratio'] = (
+        df['number_emergency'].fillna(0) + df['number_inpatient'].fillna(0)
+    ) / (df['number_outpatient'].fillna(0) + 1)
+
+    # --- Feature 3: Diagnosis density (diagnoses per day of stay) ---
+    # Clinical rationale: many diagnoses in a short stay = clinically unstable
+    # patient. +1 avoids division by zero for same-day discharges.
+    df['diagnoses_per_day'] = df['number_diagnoses'].fillna(0) / (
+        df['time_in_hospital'].fillna(1) + 1
+    )
+
+    # --- Feature 4: Length-of-stay tier (ordinal bin) ---
+    # Non-linear risk: 1-2 days, 3-5 days, 6+ days.
+    df['los_tier'] = df['time_in_hospital'].apply(bin_length_of_stay).astype(int)
+
+    # --- Feature 5: Insulin x medication-change interaction ---
+    # Clinical rationale: a patient on insulin whose regimen was changed during
+    # this encounter is at elevated readmission risk. This interaction is
+    # well-documented in diabetes care literature.
+    change_flag = (df['change'] == 'Ch').astype(int) if df['change'].dtype == 'object' else df['change']
+    df['insulin_and_change'] = (df['on_insulin'] * change_flag).astype(int)
+
+    # --- Feature 6: High-complexity flag (binary) ---
+    # Complement to continuous complexity_score; gives tree models a clean split.
+    # Threshold computed from training distribution and saved in preprocessing_state.
+    if preprocessing_state is None:
+        complexity_threshold = df['complexity_score'].quantile(0.75)
+    else:
+        complexity_threshold = preprocessing_state.get('complexity_threshold', 1.5)
+    df['high_complexity_flag'] = (df['complexity_score'] >= complexity_threshold).astype(int)
+
     # --- Encode change and diabetesMed as binary ---
-    if 'change' in df.columns:
+    if 'change' in df.columns and df['change'].dtype == 'object':
         df['change'] = (df['change'] == 'Ch').astype(int)
     if 'diabetesMed' in df.columns:
         df['diabetesMed'] = (df['diabetesMed'] == 'Yes').astype(int)
 
-    # --- Encode remaining categorical columns ---
+    # --- Target encoding for high-signal categorical columns ---
+    # LabelEncoder assigns arbitrary ordinal codes (noise). Target encoding
+    # replaces each category with its out-of-fold mean readmission rate.
+    # SHAP analysis showed these 7 categoricals carry meaningful signal:
+    # medical_specialty (top 5), admission_source_id, diag_1_cat,
+    # discharge_disposition_id, admission_type_id, diag_2_cat, diag_3_cat.
+    #
+    # Each uses 5-fold CV to prevent leakage (a row never sees its own target).
+    target_encoded_cols = [
+        'medical_specialty',
+        'admission_source_id',
+        'discharge_disposition_id',
+        'admission_type_id',
+        'diag_1_cat',
+        'diag_2_cat',
+        'diag_3_cat',
+    ]
+
+    # Store target encoding info per column in the state dict
+    if preprocessing_state is None:
+        te_info = {}
+        if 'readmission_binary' in df.columns:
+            for col in target_encoded_cols:
+                if col in df.columns:
+                    df, info = _target_encode_column(
+                        df, col,
+                        target_col='readmission_binary',
+                        preprocessing_state=None,
+                        state_key=f'te_{col}',
+                    )
+                    te_info[f'te_{col}'] = info
+        else:
+            # Edge case: training without target — should not happen in normal flow
+            for col in target_encoded_cols:
+                if col in df.columns:
+                    df[f'{col}_te'] = 0.5
+                    df.drop(columns=[col], inplace=True)
+    else:
+        for col in target_encoded_cols:
+            if col in df.columns:
+                df, _ = _target_encode_column(
+                    df, col,
+                    target_col='readmission_binary',
+                    preprocessing_state=preprocessing_state,
+                    state_key=f'te_{col}',
+                )
+
+    # --- Encode remaining categorical columns with LabelEncoder ---
     cat_cols = df.select_dtypes(include='object').columns.tolist()
     cat_cols = [c for c in cat_cols if c not in ['readmitted']]
 
@@ -186,7 +400,13 @@ def engineer_features(df: pd.DataFrame, preprocessing_state=None):
                 medians[col] = df[col].median()
                 df[col] = df[col].fillna(medians[col])
 
-        preprocessing_state = {'encoders': encoders, 'medians': medians}
+        preprocessing_state = {
+            'encoders': encoders,
+            'medians': medians,
+            'complexity_threshold': complexity_threshold,
+        }
+        # Add all target encoding maps we computed above
+        preprocessing_state.update(te_info)
     else:
         # PREDICTION MODE: use saved encoders and medians
         encoders = preprocessing_state['encoders']
