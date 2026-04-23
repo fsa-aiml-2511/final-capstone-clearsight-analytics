@@ -475,13 +475,24 @@ def prepare_test_data(filepath: str, preprocessing_state: dict):
     Run the pipeline WITHOUT splitting (for predict.py on unseen data).
     Uses preprocessing_state from training for consistent encoding and imputation.
 
-    Returns the full feature matrix ready for prediction.
+    Returns:
+        X: feature matrix ready for prediction
+        ids: encounter IDs aligned with X rows (for output CSV)
     """
     df = load_and_clean(filepath)
+
+    # Capture encounter IDs AFTER load_and_clean (which sorts by encounter_id
+    # and filters death/hospice rows). This ensures IDs are aligned with
+    # the feature rows that engineer_features will produce.
+    if 'encounter_id' in df.columns:
+        ids = df['encounter_id'].values.copy()
+    else:
+        ids = np.arange(len(df))
+
     df, _ = engineer_features(df, preprocessing_state=preprocessing_state)
 
     if 'readmission_binary' in df.columns:
         df.drop(columns=['readmission_binary'], inplace=True)
 
     print(f"Test data prepared: {len(df)} rows, {len(df.columns)} columns")
-    return df
+    return df, ids

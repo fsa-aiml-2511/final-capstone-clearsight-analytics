@@ -77,22 +77,23 @@ def train():
     input_dim = X_train_scaled.shape[1]
 
     model = Sequential([
-        Dense(256, activation='relu', input_shape=(input_dim,)),
+        Dense(128, activation='relu', input_shape=(input_dim,)),
         BatchNormalization(),
-        Dropout(0.4),
+        Dropout(0.51),
 
         Dense(128, activation='relu'),
         BatchNormalization(),
-        Dropout(0.3),
+        Dropout(0.59),
 
         Dense(64, activation='relu'),
-        Dropout(0.2),
+        BatchNormalization(),
+        Dropout(0.55),
 
         Dense(1, activation='sigmoid'),
     ])
 
     model.compile(
-        optimizer=Adam(learning_rate=0.001),
+        optimizer=Adam(learning_rate=0.00144),
         loss='binary_crossentropy',
         metrics=['accuracy', tf.keras.metrics.AUC(name='auc')],
     )
@@ -126,7 +127,7 @@ def train():
         X_train_scaled, y_train,
         validation_data=(X_val_scaled, y_val),
         epochs=100,
-        batch_size=64,
+        batch_size=32,
         callbacks=callbacks,
         class_weight=class_weight,
         verbose=1,
