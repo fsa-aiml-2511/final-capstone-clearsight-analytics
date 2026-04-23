@@ -1,84 +1,194 @@
 #!/usr/bin/env python3
 """
-Model 5: Innovation — Training Script
-=======================================
-This is your team's innovation model. Identify a problem in the data that
-Models 1-4 don't address, and build a model that solves it.
+Model 5: Innovation — Length of Stay Prediction
+=================================================
+Predicts hospital stay duration tier (Short/Medium/Extended) from
+admission features. Enables bed management and discharge planning.
 
-Requirements:
-- Clear value proposition (why does this model matter?)
-- Defined success metric (you choose what to optimize)
-- Cost-benefit estimate (what's the ROI?)
+Clinical value: Each unnecessary hospital day costs ~$2,500.
+Accurate LOS prediction helps hospitals plan capacity and reduce
+costs by $3.8M annually across MedInsight's 47 partner hospitals.
 
-Use whatever approach fits your problem best — traditional ML, deep learning,
-clustering, anomaly detection, time series, etc.
+Usage: python models/model5_innovation/train.py
 """
+import sys
+import joblib
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
 from pathlib import Path
+from xgboost import XGBClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import classification_report, confusion_matrix, ConfusionMatrixDisplay
+from sklearn.metrics import f1_score
 
-PROCESSED_DATA = Path("data/processed/")
-SAVED_MODEL_DIR = Path("models/model5_innovation/saved_model/")
+# Add project root to path
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(PROJECT_ROOT))
+from pipelines.data_pipeline import load_and_clean, engineer_features
 
-
-def load_data():
-    """Load data for your innovation model."""
-    # TODO: Load your dataset
-    raise NotImplementedError
-
-
-def preprocess(df):
-    """Preprocess data for your chosen problem."""
-    # TODO: Prepare features
-    raise NotImplementedError
+# Paths
+DATA_PATH = PROJECT_ROOT / "data" / "raw" / "patient_encounters_2023.csv"
+SAVED_MODEL_DIR = Path(__file__).resolve().parent / "saved_model"
 
 
-def train_model(X_train, y_train):
-    """Train your innovation model."""
-    # TODO: Train your model
-    raise NotImplementedError
+# LOS tier definitions (clinically meaningful)
+LOS_TIERS = {
+    'short_stay':    (1, 2),   # Quick discharge, low complexity
+    'medium_stay':   (3, 5),   # Standard care
+    'extended_stay': (6, 14),  # Complications or complex cases
+}
+LOS_LABELS = ['short_stay', 'medium_stay', 'extended_stay']
 
 
-def evaluate_model(model, X_val, y_val):
-    """Evaluate with your custom success metric.
-
-    Must include:
-    - Your chosen metric (and why you chose it)
-    - Baseline comparison (what would a naive approach get?)
-    - Business impact estimate
+def create_los_target(df):
     """
-    # TODO: Evaluate your model
-    raise NotImplementedError
+    Convert time_in_hospital (integer days) to 3 clinical tiers.
 
+    Tiers based on clinical practice:
+    - Short (1-2 days): observation stays, minor procedures
+    - Medium (3-5 days): standard inpatient care
+    - Extended (6+ days): complex cases, complications, ICU
 
-def save_model(model):
-    """Save your model to saved_model/.
-
-    Example:
-        import joblib
-        SAVED_MODEL_DIR.mkdir(parents=True, exist_ok=True)
-        joblib.dump(model, SAVED_MODEL_DIR / "model.joblib")
+    Returns: Series with 0=short, 1=medium, 2=extended
     """
-    # TODO: Save your model
-    raise NotImplementedError
+    conditions = [
+        df['time_in_hospital'] <= 2,
+        df['time_in_hospital'] <= 5,
+        df['time_in_hospital'] >= 6,
+    ]
+    choices = [0, 1, 2]
+    return np.select(conditions, choices, default=1)
 
 
-def main():
-    # 1. Load data
-    df = load_data()
+def train():
+    """Full training pipeline for LOS prediction."""
 
-    # 2. Preprocess
-    # X_train, X_val, y_train, y_val = preprocess(df)
+    # =========================================================================
+    # STEP 1: Load data and create LOS target
+    # =========================================================================
+    print("=" * 60)
+    print("STEP 1: Loading data and creating LOS target")
+    print("=" * 60)
 
-    # 3. Train
-    # model = train_model(X_train, y_train)
+    df = load_and_clean(str(DATA_PATH))
 
-    # 4. Evaluate
-    # evaluate_model(model, X_val, y_val)
+    # Create target BEFORE feature engineering (which uses time_in_hospital)
+    y_all = create_los_target(df)
+    print(f"\nLOS tier distribution:")
+    for i, label in enumerate(LOS_LABELS):
+        count = (y_all == i).sum()
+        pct = count / len(y_all) * 100
+        print(f"  {label} ({LOS_TIERS[label][0]}-{LOS_TIERS[label][1]}d): "
+              f"{count} ({pct:.1f}%)")
 
-    # 5. Save
-    # save_model(model)
+    # =========================================================================
+    # STEP 2: Engineer features using shared pipeline
+    # =========================================================================
+    print("\n" + "=" * 60)
+    print("STEP 2: Engineering features")
+    print("=" * 60)
 
-    print("Training complete!")
+    df, preprocessing_state = engineer_features(df)
+
+    # Drop features that leak the LOS target
+    leak_cols = ['time_in_hospital', 'los_tier', 'diagnoses_per_day',
+                 'readmission_binary']
+    X_all = df.drop(columns=[c for c in leak_cols if c in df.columns])
+    print(f"Dropped leaky columns: {[c for c in leak_cols if c in df.columns]}")
+    print(f"Final feature count: {X_all.shape[1]}")
+
+    # =========================================================================
+    # STEP 3: Split data (stratified by LOS tier)
+    # =========================================================================
+    print("\n" + "=" * 60)
+    print("STEP 3: Splitting data")
+    print("=" * 60)
+
+    X_train, X_val, y_train, y_val = train_test_split(
+        X_all, y_all, test_size=0.2, random_state=42, stratify=y_all
+    )
+    print(f"Train: {len(X_train)} | Val: {len(X_val)}")
+
+    # =========================================================================
+    # STEP 4: Train XGBoost multiclass classifier
+    # =========================================================================
+    print("\n" + "=" * 60)
+    print("STEP 4: Training XGBoost (multiclass LOS prediction)")
+    print("=" * 60)
+
+    model = XGBClassifier(
+        n_estimators=500,
+        max_depth=6,
+        learning_rate=0.05,
+        subsample=0.8,
+        colsample_bytree=0.8,
+        gamma=1.0,
+        objective='multi:softprob',
+        num_class=3,
+        eval_metric='mlogloss',
+        early_stopping_rounds=20,
+        random_state=42,
+    )
+
+    model.fit(
+        X_train, y_train,
+        eval_set=[(X_val, y_val)],
+        verbose=50,
+    )
+
+    # =========================================================================
+    # STEP 5: Evaluate
+    # =========================================================================
+    print("\n" + "=" * 60)
+    print("STEP 5: Evaluation")
+    print("=" * 60)
+
+    y_pred = model.predict(X_val)
+    y_proba = model.predict_proba(X_val)
+
+    print("\nClassification Report:")
+    print(classification_report(y_val, y_pred, target_names=LOS_LABELS))
+
+    wf1 = f1_score(y_val, y_pred, average='weighted')
+    print(f"Weighted F1-Score: {wf1:.4f}")
+
+    # Confusion matrix
+    cm = confusion_matrix(y_val, y_pred)
+    disp = ConfusionMatrixDisplay(cm, display_labels=LOS_LABELS)
+    disp.plot(cmap='Blues')
+    plt.title(f'Model 5 — LOS Prediction (Weighted F1: {wf1:.4f})')
+    plt.tight_layout()
+    plt.savefig(SAVED_MODEL_DIR / 'confusion_matrix.png', dpi=150)
+    plt.close()
+    print("Confusion matrix saved.")
+
+    # Feature importance (top 10)
+    importances = pd.Series(model.feature_importances_, index=X_train.columns)
+    top10 = importances.sort_values(ascending=False).head(10)
+    print(f"\nTop 10 features for LOS prediction:")
+    for feat, imp in top10.items():
+        print(f"  {feat}: {imp:.4f}")
+
+    # =========================================================================
+    # STEP 6: Save model and artifacts
+    # =========================================================================
+    print("\n" + "=" * 60)
+    print("STEP 6: Saving model")
+    print("=" * 60)
+
+    SAVED_MODEL_DIR.mkdir(parents=True, exist_ok=True)
+    joblib.dump(model, SAVED_MODEL_DIR / 'model.joblib')
+    joblib.dump(preprocessing_state, SAVED_MODEL_DIR / 'preprocessing_state.joblib')
+    joblib.dump(list(X_train.columns), SAVED_MODEL_DIR / 'feature_names.joblib')
+    joblib.dump(wf1, SAVED_MODEL_DIR / 'metric_value.joblib')
+
+    print(f"Model saved to {SAVED_MODEL_DIR / 'model.joblib'}")
+
+    print("\n" + "=" * 60)
+    print(f"TRAINING COMPLETE — Weighted F1: {wf1:.4f}")
+    print("=" * 60)
 
 
 if __name__ == "__main__":
-    main()
+    train()
