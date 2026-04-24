@@ -74,17 +74,9 @@ def main():
     test_file = find_test_file()
     print(f"Test file found: {test_file}")
 
-    # Load raw data to extract IDs later
-    raw_df = pd.read_csv(test_file)
-
     # 3. Preprocess test data using same pipeline as training
-    X_test = prepare_test_data(str(test_file), preprocessing_state)
-
-    # Extract IDs from rows that survived the pipeline filter
-    if "encounter_id" in raw_df.columns:
-        ids = raw_df.loc[X_test.index, "encounter_id"]
-    else:
-        ids = X_test.index
+    #    prepare_test_data returns aligned IDs (safe after sort + filter)
+    X_test, ids = prepare_test_data(str(test_file), preprocessing_state)
 
     # 4. Generate predictions
     y_pred, y_proba, confidence = predict(model, scaler, X_test, feature_names)
