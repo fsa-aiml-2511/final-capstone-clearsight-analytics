@@ -3,8 +3,7 @@
 Model 1: Traditional ML — Training Script
 ===========================================
 XGBoost classifier for hospital readmission prediction.
-Includes SMOTE for class imbalance and SHAP for interpretability.
-
+Uses scale_pos_weight for class imbalance and SHAP for interpretability.
 Usage: python models/model1_traditional_ml/train.py
 """
 import sys
@@ -14,8 +13,8 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 from xgboost import XGBClassifier
 from sklearn.metrics import classification_report, roc_auc_score, confusion_matrix, ConfusionMatrixDisplay
-from imblearn.over_sampling import SMOTE
 import shap
+import pandas as pd
 
 # Add project root to path so we can import the pipeline
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -28,7 +27,7 @@ SAVED_MODEL_DIR = Path(__file__).resolve().parent / "saved_model"
 
 
 def train():
-    """Full training pipeline: load data, SMOTE, train XGBoost, evaluate, SHAP, save."""
+    """Full training pipeline: load data, train XGBoost with scale_pos_weight, evaluate, SHAP, save."""
 
     # =========================================================================
     # STEP 1: Load and prepare data using shared pipeline
@@ -39,17 +38,20 @@ def train():
     X_train, X_val, y_train, y_val, preprocessing_state = prepare_training_data(str(DATA_PATH))
 
     # =========================================================================
-    # STEP 2: Apply SMOTE to handle class imbalance
+    # STEP 2: Compute scale_pos_weight for class imbalance
     # =========================================================================
+    # Replaces SMOTE: instead of synthesizing minority samples (which can add
+    # noise in ambiguous clinical regions), we weight the loss function to
+    # penalize misclassifying the minority class more heavily.
+    # Formula: scale_pos_weight = count(negative) / count(positive)
     print("\n" + "=" * 60)
-    print("STEP 2: Applying SMOTE for class imbalance")
+    print("STEP 2: Computing scale_pos_weight for class imbalance")
     print("=" * 60)
-    print(f"Before SMOTE: {y_train.value_counts().to_dict()}")
-
-    sm = SMOTE(random_state=42)
-    X_train_res, y_train_res = sm.fit_resample(X_train, y_train)
-
-    print(f"After SMOTE:  {dict(zip(*np.unique(y_train_res, return_counts=True)))}")
+    neg_count = (y_train == 0).sum()
+    pos_count = (y_train == 1).sum()
+    scale_pos_weight = neg_count / pos_count
+    print(f"Class distribution: {{0: {neg_count}, 1: {pos_count}}}")
+    print(f"scale_pos_weight: {scale_pos_weight:.4f}")
 
     # =========================================================================
     # STEP 3: Train XGBoost with Early Stopping
@@ -59,19 +61,22 @@ def train():
     print("=" * 60)
 
     model = XGBClassifier(
-        n_estimators=300,
-        max_depth=6,
-        learning_rate=0.1,
-        subsample=0.8,
-        colsample_bytree=0.8,
+        n_estimators=1500,
+        max_depth=9,
+        min_child_weight=1,
+        learning_rate=0.008,
+        subsample=0.84,
+        colsample_bytree=0.64,
+        gamma=0.91,
+        reg_alpha=4.31,
+        reg_lambda=0.64,
+        scale_pos_weight=scale_pos_weight,
         random_state=42,
         eval_metric='auc',
-        use_label_encoder=False,
-        early_stopping_rounds=15,
+        early_stopping_rounds=25,
     )
-
     model.fit(
-        X_train_res, y_train_res,
+        X_train, y_train,
         eval_set=[(X_val, y_val)],
         verbose=50,
     )
@@ -155,6 +160,7 @@ def train():
     print(f"Preprocessing state saved to {SAVED_MODEL_DIR / 'preprocessing_state.joblib'}")
     print(f"Feature names saved to {SAVED_MODEL_DIR / 'feature_names.joblib'}")
 
+   
     print("\n" + "=" * 60)
     print(f"TRAINING COMPLETE — AUC-ROC: {auc:.4f}")
     print("=" * 60)
