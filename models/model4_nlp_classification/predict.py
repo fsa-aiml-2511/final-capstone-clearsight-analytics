@@ -30,7 +30,7 @@ from pipelines.data_pipeline_wes import load_raw_data, clean_data, engineer_feat
 #   "meta_lstm"    → train3.py  (biLSTM + drug/condition metadata, PyTorch)
 #   "plain_lstm"   → train2.py  (plain biLSTM, PyTorch)
 #   "tfidf"        → train.py   (Logistic Regression + TF-IDF, sklearn)
-ACTIVE_MODEL = "biobert_meta"
+ACTIVE_MODEL = "meta_lstm"
 
 MODEL_CONFIGS = {
     "biobert_meta": {
