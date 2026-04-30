@@ -82,7 +82,8 @@ def load_and_clean(filepath: str) -> pd.DataFrame:
 
     # 6. Drop columns we won't use
     drop_cols = [
-        'encounter_id',   # just an ID, not a feature
+        # encounter_id kept here intentionally — prepare_test_data() captures
+        # real IDs from df before engineer_features() drops the column.
         'patient_nbr',    # patient ID, not a feature (history features already computed)
         'weight',         # 97% missing
         'payer_code',     # 40% missing, not clinically useful
@@ -223,6 +224,12 @@ def engineer_features(df: pd.DataFrame, preprocessing_state=None):
     Prediction mode (preprocessing_state provided): uses saved encoders,
     medians, and target encoding map for consistent transforms.
     """
+    # Drop encounter_id before feature engineering so it never becomes a feature.
+    # prepare_test_data() captures IDs from df *before* calling this function.
+    if 'encounter_id' in df.columns:
+        df = df.drop(columns=['encounter_id'])
+
+
     # --- Medication features ---
     med_cols = ['metformin', 'repaglinide', 'nateglinide', 'chlorpropamide',
                 'glimepiride', 'acetohexamide', 'glipizide', 'glyburide',
@@ -313,9 +320,15 @@ def engineer_features(df: pd.DataFrame, preprocessing_state=None):
 
     # --- Feature 5: Insulin x medication-change interaction ---
     # Clinical rationale: a patient on insulin whose regimen was changed during
-    # this encounter is at elevated readmission risk. This interaction is
-    # well-documented in diabetes care literature.
-    change_flag = (df['change'] == 'Ch').astype(int) if df['change'].dtype == 'object' else df['change']
+    # this encounter is at elevated readmission risk. 
+    
+    df['on_insulin'] = pd.to_numeric(df['on_insulin'], errors='coerce').fillna(0)
+    
+    if df['change'].dtype == 'object':
+        change_flag = (df['change'] == 'Ch').astype(int)
+    else:
+        change_flag = pd.to_numeric(df['change'], errors='coerce').fillna(0).astype(int)
+
     df['insulin_and_change'] = (df['on_insulin'] * change_flag).astype(int)
 
     # --- Feature 6: High-complexity flag (binary) ---
