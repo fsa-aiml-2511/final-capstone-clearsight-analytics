@@ -25,11 +25,19 @@ OUTPUT_FILE = TEST_DATA_DIR / "model1_results.csv"
 
 
 def load_model():
-    """Load trained model, preprocessing state, and feature names."""
+    """Load trained model, preprocessing state, feature names, and optimal threshold."""
     model = joblib.load(SAVED_MODEL_DIR / "model.joblib")
     preprocessing_state = joblib.load(SAVED_MODEL_DIR / "preprocessing_state.joblib")
     feature_names = joblib.load(SAVED_MODEL_DIR / "feature_names.joblib")
-    return model, preprocessing_state, feature_names
+
+    # Load cost-optimized threshold (falls back to 0.5 if not found)
+    threshold_path = SAVED_MODEL_DIR / "optimal_threshold.joblib"
+    if threshold_path.exists():
+        optimal_threshold = joblib.load(threshold_path)
+    else:
+        optimal_threshold = 0.5
+
+    return model, preprocessing_state, feature_names, optimal_threshold
 
 
 def find_test_file():
@@ -49,14 +57,16 @@ def find_test_file():
     return csv_files[0]
 
 
-def predict(model, X_test, feature_names):
-    """Generate predictions and format output."""
-    # Make sure columns match training order exactly.
-    # reindex prevents KeyErrors if a feature is completely missing in test data.
+def predict(model, X_test, feature_names, threshold=0.5):
+    """Generate predictions using cost-optimized threshold.
+
+    Predictions use the optimal threshold from training (minimizes clinical
+    cost: FN = $15K, FP = $500), not the default 0.5.
+    """
     X_test = X_test.reindex(columns=feature_names, fill_value=0)
 
-    y_pred = model.predict(X_test)
     y_proba = model.predict_proba(X_test)[:, 1]
+    y_pred = (y_proba >= threshold).astype(int)
 
     # Confidence = how sure the model is (max of both probabilities)
     confidence = np.maximum(y_proba, 1 - y_proba)
@@ -67,7 +77,8 @@ def predict(model, X_test, feature_names):
 def main():
     # 1. Load model and preprocessing artifacts
     print("Loading model...")
-    model, preprocessing_state, feature_names = load_model()
+    model, preprocessing_state, feature_names, optimal_threshold = load_model()
+    print(f"Using cost-optimized threshold: {optimal_threshold:.2f}")
 
     # 2. Find and load test data
     test_file = find_test_file()
@@ -79,8 +90,8 @@ def main():
     #    prepare_test_data returns aligned IDs (safe after sort + filter)
     X_test, ids = prepare_test_data(str(test_file), preprocessing_state)
 
-    # 4. Generate predictions
-    y_pred, y_proba, confidence = predict(model, X_test, feature_names)
+    # 4. Generate predictions (using cost-optimized threshold)
+    y_pred, y_proba, confidence = predict(model, X_test, feature_names, threshold=optimal_threshold)
 
     # 5. Save results — MUST match output template exactly
     results = pd.DataFrame({

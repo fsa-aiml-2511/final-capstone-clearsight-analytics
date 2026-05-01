@@ -56,6 +56,13 @@ env/
 
 # Logs
 *.log
+logs/
 wandb/
 runs/
 data/raw/healthcare_retinal_images/
+# ClearSight Specific
+*.png
+*.PNG
+saved_model/
+logs/
+.env
