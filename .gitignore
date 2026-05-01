@@ -10,7 +10,7 @@ data/processed/*.parquet
 *.png
 *.jpg
 # Image datasets
-data/raw/
+data/raw/*
 data/processed/images/
 
 # Model weights and artifacts
