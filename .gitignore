@@ -7,9 +7,10 @@ data/processed/*.json
 data/processed/*.parquet
 *.zip
 *.tar.gz
-
+*.png
+*.jpg
 # Image datasets
-data/raw/images/
+data/raw/*
 data/processed/images/
 
 # Model weights and artifacts
