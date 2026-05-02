@@ -25,6 +25,8 @@ from typing import Any
 import tensorflow as tf
 from PIL import Image
 from keras.applications.resnet50 import preprocess_input
+import cv2
+import io
 # torch and transformers are imported lazily inside load_model4() to avoid
 # a crash when torchvision is missing from the environment on startup.
 
@@ -675,6 +677,57 @@ def predict_m3(image_file, model) -> tuple[str, float]:
         return "HIGH RISK — Diabetic Retinopathy Detected", confidence
     else:
         return "LOW RISK — No Retinopathy Detected", 1.0 - confidence
+
+
+# =============================================================================
+# MODEL 3 — Grad-CAM helpers
+# =============================================================================
+def make_gradcam(img_array, model, last_conv_layer="conv5_block3_out"):
+    """Computes a Grad-CAM heatmap for the given preprocessed image array.
+
+    Args:
+        img_array: Preprocessed image batch (1, 224, 224, 3) float32 numpy array.
+        model: Loaded tf.keras.Model (ResNet50).
+        last_conv_layer: Name of the final convolutional layer to target.
+
+    Returns:
+        heatmap: 2-D numpy array (H×W) with values in [0, 1].
+    """
+    grad_model = tf.keras.models.Model(
+        [model.inputs],
+        [model.get_layer(last_conv_layer).output, model.output]
+    )
+    with tf.GradientTape() as tape:
+        conv_outputs, predictions = grad_model(img_array)
+        loss = predictions[:, 0]
+    grads = tape.gradient(loss, conv_outputs)
+    pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
+    conv_outputs = conv_outputs[0]
+    heatmap = tf.reduce_sum(tf.multiply(pooled_grads, conv_outputs), axis=-1)
+    heatmap = np.maximum(heatmap.numpy(), 0)
+    if heatmap.max() > 0:
+        heatmap /= heatmap.max()
+    return heatmap
+
+
+def overlay_gradcam(pil_image, heatmap, alpha=0.4):
+    """Overlays a Grad-CAM heatmap onto a PIL image.
+
+    Args:
+        pil_image: Original PIL.Image (any size).
+        heatmap: 2-D numpy array from make_gradcam().
+        alpha: Blending weight for the heatmap overlay (0–1).
+
+    Returns:
+        PIL.Image: Superimposed RGB image.
+    """
+    img = np.array(pil_image.resize((224, 224)))
+    heatmap_resized = cv2.resize(heatmap, (224, 224))
+    heatmap_uint8 = np.uint8(255 * heatmap_resized)
+    heatmap_colored = cv2.applyColorMap(heatmap_uint8, cv2.COLORMAP_JET)
+    heatmap_rgb = cv2.cvtColor(heatmap_colored, cv2.COLOR_BGR2RGB)
+    superimposed = cv2.addWeighted(img, 1 - alpha, heatmap_rgb, alpha, 0)
+    return Image.fromarray(superimposed)
 
 
 class Vocabulary:
@@ -1509,7 +1562,7 @@ def page_home() -> None:
                      font-weight:600;margin-right:8px;margin-bottom:6px;
                      border:1px solid rgba(16,185,129,0.25);
                      font-family:'JetBrains Mono',monospace;letter-spacing:0.04em;">
-          ✓ 4 models live
+          ✓ 5 models live
         </span>
       </div>
     </div>
@@ -2600,45 +2653,109 @@ def page_retinal() -> None:
       </p>
     </div>""", unsafe_allow_html=True)
 
-    # 3. Load model
-    model3 = load_model3()
-    if model3 is None:
-        st.error("Model 3 could not be loaded. Check logs for details.")
-        return
-
-    # 4. Uploader
+    # 3. Uploader
     uploaded = st.file_uploader("Upload a fundus photograph (PNG / JPG)", type=["png", "jpg", "jpeg"])
 
-    if uploaded:
-        # 5. Run real inference
-        with st.spinner("Running ResNet50 inference..."):
-            label, confidence = predict_m3(uploaded, model3)
-            logger.info("M3 result — label=%s confidence=%.4f", label, confidence)
+    if uploaded is not None:
+        model = load_model3()
+        if model is None:
+            st.error("Model could not be loaded.")
+            return
 
-        # 6. Results Display
-        c1, c2 = st.columns([1, 1], gap="large")
+        label, confidence = predict_m3(uploaded, model)
+        is_high_risk = "HIGH RISK" in label
+        logger.info("M3 result — label=%s confidence=%.4f", label, confidence)
 
-        with c1:
-            st.image(uploaded, caption="Uploaded Fundus Image", use_container_width=True)
+        # ── ZONE 1: Result badge full width ──────────────────────
+        if is_high_risk:
+            st.markdown(
+                f"""<div style="background:#7f1d1d;border-radius:10px;padding:12px 20px;
+                margin-bottom:16px;display:flex;align-items:center;gap:12px;">
+                <span style="font-size:1.4rem;">🔴</span>
+                <span style="color:#fecaca;font-size:1.1rem;font-weight:700;">{label}</span>
+                </div>""", unsafe_allow_html=True)
+        else:
+            st.markdown(
+                f"""<div style="background:#14532d;border-radius:10px;padding:12px 20px;
+                margin-bottom:16px;display:flex;align-items:center;gap:12px;">
+                <span style="font-size:1.4rem;">🟢</span>
+                <span style="color:#bbf7d0;font-size:1.1rem;font-weight:700;">{label}</span>
+                </div>""", unsafe_allow_html=True)
 
-        with c2:
-            st.markdown("""
-            <div class="scan-card">
-              <div style="font-family:'JetBrains Mono'; font-size:0.75rem; color:#94a3b8;
-                          letter-spacing:0.1em; margin-bottom:0.5rem;">
-                  INFERENCE RESULTS
-              </div>
+        # ── ZONE 2: Image left | Details right ───────────────────
+        col_img, col_details = st.columns([6, 4])
+
+        with col_img:
+            st.image(uploaded, caption="Fundus Photograph", use_container_width=True)
+
+        with col_details:
+            # Confidence bar
+            st.markdown("**Model Confidence**")
+            bar_color = "#ef4444" if is_high_risk else "#22c55e"
+            st.markdown(
+                f"""<div style="background:#1e293b;border-radius:8px;padding:4px;margin-bottom:16px;">
+                  <div style="width:{confidence*100:.1f}%;background:{bar_color};border-radius:6px;
+                              padding:8px 12px;color:white;font-weight:700;font-size:1rem;">
+                    {confidence*100:.1f}%
+                  </div>
+                </div>""", unsafe_allow_html=True)
+
+            # Clinical recommendation
+            st.markdown("**Clinical Recommendation**")
+            if is_high_risk:
+                st.error("⚠️ Ophthalmologist referral recommended within 30 days.")
+            else:
+                st.info("✅ Annual screening recommended. No immediate action required.")
+
+            # Severity table — only HIGH RISK
+            if is_high_risk:
+                st.markdown("**DR Severity Reference**")
+                st.markdown("""
+            <div style="background:#1e293b;border-radius:10px;padding:16px;
+                        border:1px solid #334155;margin-top:8px;">
+            <table style="width:100%;border-collapse:collapse;">
+              <thead>
+                <tr>
+                  <th style="color:#94a3b8;font-size:0.75rem;padding:4px 8px;text-align:left;">GRADE</th>
+                  <th style="color:#94a3b8;font-size:0.75rem;padding:4px 8px;text-align:left;">NAME</th>
+                  <th style="color:#94a3b8;font-size:0.75rem;padding:4px 8px;text-align:left;">ACTION</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr><td style="color:#e2e8f0;padding:6px 8px;">1</td><td style="color:#e2e8f0;padding:6px 8px;">Mild NPDR</td><td style="color:#94a3b8;padding:6px 8px;">Monitor annually</td></tr>
+                <tr><td style="color:#e2e8f0;padding:6px 8px;">2</td><td style="color:#e2e8f0;padding:6px 8px;">Moderate NPDR</td><td style="color:#94a3b8;padding:6px 8px;">Follow-up in 6 months</td></tr>
+                <tr><td style="color:#e2e8f0;padding:6px 8px;">3</td><td style="color:#e2e8f0;padding:6px 8px;">Severe NPDR</td><td style="color:#f87171;padding:6px 8px;">Referral within 1 month</td></tr>
+                <tr><td style="color:#e2e8f0;padding:6px 8px;">4</td><td style="color:#e2e8f0;padding:6px 8px;">Proliferative DR</td><td style="color:#f87171;padding:6px 8px;">Urgent referral</td></tr>
+              </tbody>
+            </table>
             </div>
             """, unsafe_allow_html=True)
 
-            if label.startswith("HIGH"):
-                st.warning(f"**{label}**")
-            else:
-                st.success(f"**{label}**")
+        # ── ZONE 3: Grad-CAM side by side with original ───────────
+        st.markdown("---")
+        st.subheader("🔬 Grad-CAM — Model Attention Map")
+        st.caption("Highlights the retinal regions that influenced the prediction.")
 
-            st.metric(label="Model Confidence", value=f"{confidence * 100:.1f}%")
-    else:
-        st.info("Upload a fundus photograph above to begin screening.")
+        if st.button("Generate Grad-CAM Heatmap"):
+            with st.spinner("Computing attention map..."):
+                try:
+                    pil_img = Image.open(uploaded).convert("RGB")
+                    img_arr = np.array(pil_img.resize((224, 224))).astype(np.float32)
+                    img_arr = np.expand_dims(img_arr, axis=0)
+                    from keras.applications.resnet50 import preprocess_input as resnet_preprocess
+                    img_preprocessed = resnet_preprocess(img_arr)
+                    heatmap = make_gradcam(img_preprocessed, model)
+                    overlay = overlay_gradcam(pil_img, heatmap)
+
+                    col_orig, col_cam = st.columns(2)
+                    with col_orig:
+                        st.image(uploaded, caption="Original", use_container_width=True)
+                    with col_cam:
+                        st.image(overlay, caption="Grad-CAM Overlay", use_container_width=True)
+
+                    st.caption("🔴 Red/yellow = high attention regions  |  🔵 Blue = low attention")
+                except Exception as e:
+                    st.error(f"Grad-CAM failed: {e}")
 # =============================================================================
 # MAIN ROUTER
 # =============================================================================
