@@ -22,6 +22,9 @@ import joblib
 import streamlit as st
 from pathlib import Path
 from typing import Any
+import tensorflow as tf
+from PIL import Image
+from keras.applications.resnet50 import preprocess_input
 # torch and transformers are imported lazily inside load_model4() to avoid
 # a crash when torchvision is missing from the environment on startup.
 
@@ -58,6 +61,7 @@ if not logger.handlers:  # guard against duplicate handlers on hot-reload
 # --- Model paths ---
 M1_DIR = PROJECT_ROOT / "models" / "model1_traditional_ml" / "saved_model"
 M2_DIR = PROJECT_ROOT / "models" / "model2_deep_learning" / "saved_model"
+M3_DIR = PROJECT_ROOT / "models" / "model3_cnn" / "saved_model"              # CNN Retinal (Doug)
 M4_DIR = PROJECT_ROOT / "models" / "model4_nlp_classification" / "saved_model" # NLP (Wes)
 M5_DIR = PROJECT_ROOT / "models" / "model5_innovation" / "saved_model"       # Capacity Planning
 
@@ -629,6 +633,49 @@ def load_model2() -> tuple[Any, Any, dict, list]:
     return model, scaler, state, feats
 
 
+# =============================================================================
+# MODEL 3 — CNN Retinal (ResNet50, binary DR classifier)
+# =============================================================================
+@st.cache_resource(show_spinner=False)
+def load_model3():
+    """Loads and caches the Model 3 ResNet50 Diabetic Retinopathy classifier.
+
+    Returns:
+        tf.keras.Model: Compiled model loaded from best_model.keras, or None on failure.
+    """
+    t0 = time.perf_counter()
+    logger.info("Loading Model 3 (CNN Retinal) from %s", M3_DIR)
+    try:
+        model = tf.keras.models.load_model(M3_DIR / "best_model.keras", compile=False)
+    except Exception:
+        logger.error("Failed to load Model 3 artifacts", exc_info=True)
+        raise
+    logger.info("Model 3 loaded in %.0f ms", (time.perf_counter() - t0) * 1000)
+    return model
+
+
+def predict_m3(image_file, model) -> tuple[str, float]:
+    """Runs ResNet50 inference on a fundus image file.
+
+    Args:
+        image_file: A file-like object (e.g. from st.file_uploader).
+        model: Loaded tf.keras.Model instance.
+
+    Returns:
+        A 2-tuple of (label: str, confidence: float 0–1).
+    """
+    img = Image.open(image_file).convert("RGB")
+    img = img.resize((224, 224))
+    img_array = np.array(img)
+    img_array = np.expand_dims(img_array, axis=0)
+    img_preprocessed = preprocess_input(img_array.astype(np.float32))
+    preds = model.predict(img_preprocessed)
+    confidence = float(preds[0][0])
+    if confidence > 0.5:
+        return "HIGH RISK — Diabetic Retinopathy Detected", confidence
+    else:
+        return "LOW RISK — No Retinopathy Detected", 1.0 - confidence
+
 
 class Vocabulary:
     def get(self, word, default=0):
@@ -1142,7 +1189,7 @@ def render_sidebar() -> str:
             st.markdown('<div class="status-row"><span><span style="color:#ef4444; margin-right:5px;">●</span> M5 · Innovation</span><span class="status-pill pill-error">ERROR</span></div>', unsafe_allow_html=True)
         
         # Pending Models (M3 & M4)
-        st.markdown('<div class="status-row"><span><span style="color:#f59e0b; margin-right:5px;">●</span> M3 · CNN Retina</span><span class="status-pill pill-pending">PENDING</span></div>', unsafe_allow_html=True)
+        st.markdown('<div class="status-row"><span><span style="color:#10b981; margin-right:5px;">●</span> M3 · CNN Retina</span><span class="status-pill pill-online">ONLINE</span></div>', unsafe_allow_html=True)
         st.markdown('<div class="status-row"><span><span style="color:#22c55e; margin-right:5px;">●</span> M4 · NLP Notes</span><span class="status-pill pill-online">ONLINE</span></div>', unsafe_allow_html=True)
 
         st.markdown("<br>", unsafe_allow_html=True)
@@ -2505,13 +2552,11 @@ def page_insights() -> None:
 # PAGE: RETINAL AI (High-Fidelity UI Simulation)
 # =============================================================================
 def page_retinal() -> None:
-    """Renders the Retinal AI Screening page (UI simulation for Model 3 CNN).
+    """Renders the Retinal AI Screening page for Model 3 CNN (ResNet50).
 
-    Provides a fundus photograph uploader and a simulated EfficientNet inference
-    sequence with staged loading spinners and a results card showing DR severity,
-    probability bars, and a clinical recommendation. Inference results are
-    hard-coded placeholders pending final CNN pipeline integration; the page is
-    labelled as a preview UI with investigational-use caveats.
+    Loads the trained best_model.keras, accepts a fundus photograph upload,
+    runs ResNet50 inference via predict_m3(), and displays the result label
+    and confidence score. Class 0 = No DR, Class 1 = Has DR (threshold 0.5).
     """
     # 1. CSS for the Retinal Results Panel
     st.markdown("""
@@ -2543,80 +2588,57 @@ def page_retinal() -> None:
     st.markdown("""
     <div style="margin-bottom:1.5rem;">
       <span class="badge" style="display:inline-block; font-family:'JetBrains Mono',monospace;
-            font-size:0.7rem; font-weight:600; color:#fbbf24;
-            background:rgba(251,191,36,0.1); border:1px solid rgba(251,191,36,0.3);
+            font-size:0.7rem; font-weight:600; color:#10b981;
+            background:rgba(16,185,129,0.1); border:1px solid rgba(16,185,129,0.3);
             padding:4px 12px; border-radius:999px; letter-spacing:0.08em;
-            text-transform:uppercase;">⚠ MODEL 3 · PREVIEW UI</span>
+            text-transform:uppercase;">✓ MODEL 3 · ONLINE</span>
       <h1 style="font-family:'Space Grotesk',sans-serif; font-size:2rem;
                  margin:0.4rem 0;">Retinal AI Screening</h1>
       <p style="color:#94a3b8;">
-        Convolutional neural network (EfficientNet) for Diabetic Retinopathy detection 
-        from fundus photographs. <br><i>*Note: Backend inference is currently simulated pending final pipeline integration.</i>
+        ResNet50 convolutional neural network for Diabetic Retinopathy detection
+        from fundus photographs.
       </p>
     </div>""", unsafe_allow_html=True)
 
-    # 3. Uploader
+    # 3. Load model
+    model3 = load_model3()
+    if model3 is None:
+        st.error("Model 3 could not be loaded. Check logs for details.")
+        return
+
+    # 4. Uploader
     uploaded = st.file_uploader("Upload a fundus photograph (PNG / JPG)", type=["png", "jpg", "jpeg"])
-    
+
     if uploaded:
-        # 4. The "Fake" Loading Sequence (Looks very professional to the user)
-        with st.spinner("Initializing EfficientNet backbone..."):
-            time.sleep(0.8)
-        with st.spinner("Extracting vascular features & detecting microaneurysms..."):
-            time.sleep(1.2)
-        with st.spinner("Calculating severity probability..."):
-            time.sleep(0.5)
-            
-        # 5. Results Display
+        # 5. Run real inference
+        with st.spinner("Running ResNet50 inference..."):
+            label, confidence = predict_m3(uploaded, model3)
+            logger.info("M3 result — label=%s confidence=%.4f", label, confidence)
+
+        # 6. Results Display
         c1, c2 = st.columns([1, 1], gap="large")
-        
+
         with c1:
             st.image(uploaded, caption="Uploaded Fundus Image", use_container_width=True)
-            st.markdown("""
-            <div style="padding: 0.8rem; background: rgba(255,255,255,0.03); border-radius: 8px; text-align: center; font-size: 0.8rem; color: #64748b;">
-                💡 <b>Future Update:</b> In production, this area will display the Grad-CAM heatmap overlay, visually highlighting the specific hemorrhages and lesions driving the AI's decision.
-            </div>
-            """, unsafe_allow_html=True)
-            
+
         with c2:
-            # Simulated Results Card
             st.markdown("""
             <div class="scan-card">
-              <div style="font-family:'JetBrains Mono'; font-size:0.75rem; color:#94a3b8; letter-spacing:0.1em; margin-bottom:0.5rem;">
-                  INFERENCE RESULTS (SIMULATED)
-              </div>
-              <h3 style="margin-top: 0; color: white;">Diabetic Retinopathy Detected</h3>
-              <div class="severity-badge">MODERATE NPDR</div>
-              
-              <!-- Probability Bar -->
-              <div style="margin-bottom: 0.4rem; display: flex; justify-content: space-between; font-family: 'JetBrains Mono', monospace; font-size: 0.85rem;">
-                  <span style="color: #cbd5e1;">Referable DR Probability</span>
-                  <span style="color: #f59e0b; font-weight: bold;">84.2%</span>
-              </div>
-              <div style="background: rgba(255,255,255,0.05); border-radius: 999px; height: 8px; overflow: hidden; margin-bottom: 1.5rem;">
-                  <div style="width: 84.2%; height: 100%; background: linear-gradient(90deg, #f59e0b, #ef4444); box-shadow: 0 0 10px rgba(239,68,68,0.5);"></div>
-              </div>
-              
-              <!-- Quality Score Bar -->
-              <div style="margin-bottom: 0.4rem; display: flex; justify-content: space-between; font-family: 'JetBrains Mono', monospace; font-size: 0.85rem;">
-                  <span style="color: #cbd5e1;">Image Quality Score</span>
-                  <span style="color: #10b981; font-weight: bold;">92.0%</span>
-              </div>
-              <div style="background: rgba(255,255,255,0.05); border-radius: 999px; height: 8px; overflow: hidden; margin-bottom: 1.5rem;">
-                  <div style="width: 92%; height: 100%; background: linear-gradient(90deg, #10b981, #34d399); box-shadow: 0 0 10px rgba(16,185,129,0.5);"></div>
-              </div>
-              
-              <!-- Recommendation -->
-              <div style="padding: 1rem; background: rgba(34,211,238,0.05); border-left: 3px solid #22d3ee; border-radius: 4px;">
-                  <strong style="color: #5eead4; font-size: 0.85rem; font-family:'JetBrains Mono',monospace;">CLINICAL RECOMMENDATION</strong><br>
-                  <span style="font-size: 0.85rem; color: #cbd5e1; display: inline-block; margin-top: 0.4rem;">
-                    High probability of referable diabetic retinopathy (Non-Proliferative). Recommend standard ophthalmic evaluation within 4-6 weeks to prevent vision loss.
-                  </span>
+              <div style="font-family:'JetBrains Mono'; font-size:0.75rem; color:#94a3b8;
+                          letter-spacing:0.1em; margin-bottom:0.5rem;">
+                  INFERENCE RESULTS
               </div>
             </div>
             """, unsafe_allow_html=True)
+
+            if label.startswith("HIGH"):
+                st.warning(f"**{label}**")
+            else:
+                st.success(f"**{label}**")
+
+            st.metric(label="Model Confidence", value=f"{confidence * 100:.1f}%")
     else:
-        st.info("Upload a fundus photograph above to test the screening UI.")
+        st.info("Upload a fundus photograph above to begin screening.")
 # =============================================================================
 # MAIN ROUTER
 # =============================================================================
