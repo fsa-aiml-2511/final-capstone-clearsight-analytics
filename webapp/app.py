@@ -886,6 +886,59 @@ def predict_m4(text_notes: str, drug_name: str, condition: str) -> tuple[str, fl
     return f"{display_title} RISK SENTIMENT", confidence, css_map.get(label, "risk-low"), explanation
 
 
+def generate_clinical_synthesis(
+    m1_proba: float,
+    m2_proba: float,
+    m5_label: str,
+    m4_label: str,
+    m4_explanation: str,
+) -> str:
+    from openai import OpenAI
+
+    client = OpenAI(
+        api_key=st.secrets.get("GROQ_API_KEY", ""),
+        base_url="https://api.groq.com/openai/v1",
+    )
+
+    prompt = f"""You are a senior clinical informatics specialist reviewing AI model outputs 
+for a hospitalized diabetic patient at MedInsight Healthcare.
+
+MULTI-MODEL DIAGNOSTIC OUTPUTS:
+- Readmission Risk (XGBoost M1): {m1_proba*100:.1f}%
+- Readmission Risk (DNN M2): {m2_proba*100:.1f}%
+- Predicted Length of Stay (M5): {m5_label}
+- Clinical Notes Sentiment (NLP M4): {m4_label}
+- NLP Context: {m4_explanation}
+
+Based on these AI model outputs, write a concise clinical synthesis in exactly this format:
+
+SYNTHESIS (2-3 sentences): A professional summary of the patient's overall risk profile, 
+noting where models agree or diverge.
+
+RECOMMENDATIONS:
+1. [First actionable recommendation for the care team]
+2. [Second recommendation]
+3. [Third recommendation]
+
+Keep the tone clinical, precise, and professional. Do not mention specific model names 
+(M1, M2, etc.) — speak in terms of clinical risk indicators."""
+
+    try:
+        response = client.chat.completions.create(
+            model="llama-3.1-8b-instant",
+            max_tokens=400,
+            temperature=0.3,
+            messages=[
+                {"role": "system", "content": "You are a helpful medical AI assistant. Be concise and clinical."},
+                {"role": "user", "content": prompt}
+            ],
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        logger.error("Clinical synthesis API call failed: %s", e, exc_info=True)
+        return f"Synthesis unavailable: {str(e)}"
+
+
 @st.cache_resource(show_spinner=False)
 def load_model5() -> tuple[Any, dict, list]:
     """Loads and caches the Model 5 Length-of-Stay classifier and its artifacts.
@@ -2113,272 +2166,355 @@ def page_predict() -> None:
             "medical_specialty":        med_spec,
         }
 
-        # --- PREDICTION RESULTS UI ---
-        
-        # 1. Inject CSS for the Gauges
-        st.markdown("""
-        <style>
-        .result-panel {
-            background: rgba(15,30,52,0.6);
-            border: 1px solid rgba(34,211,238,0.15);
-            border-radius: 16px;
-            padding: 2rem 1rem;
-            text-align: center;
-            position: relative;
-            overflow: hidden;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
-            margin-bottom: 1rem;
-        }
-        .gauge-wrapper {
-            position: relative;
-            width: 160px;
-            height: 160px;
-            margin: 0 auto 1.5rem auto;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            background: rgba(0,0,0,0.2);
-            box-shadow: inset 0 0 20px rgba(0,0,0,0.5);
-        }
-        .gauge-inner {
-            position: absolute;
-            width: 130px;
-            height: 130px;
-            background: #0b1121;
-            border-radius: 50%;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            z-index: 10;
-        }
-        .gauge-val {
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 2.2rem;
-            font-weight: 800;
-            line-height: 1;
-            color: white;
-        }
-        .gauge-lbl {
-            font-size: 0.7rem;
-            color: #64748b;
-            text-transform: uppercase;
-            letter-spacing: 0.1em;
-            margin-top: 4px;
-        }
-        .risk-badge {
-            display: inline-block;
-            padding: 0.4rem 1rem;
-            border-radius: 999px;
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 0.85rem;
-            font-weight: 700;
-            letter-spacing: 0.05em;
-            margin-bottom: 0.5rem;
-        }
-        .risk-LOW { background: rgba(16,185,129,0.15); color: #10b981; border: 1px solid rgba(16,185,129,0.3); }
-        .risk-MODERATE { background: rgba(245,158,11,0.15); color: #f59e0b; border: 1px solid rgba(245,158,11,0.3); }
-        .risk-HIGH { background: rgba(239,68,68,0.15); color: #ef4444; border: 1px solid rgba(239,68,68,0.3); }
-        </style>
-        """, unsafe_allow_html=True)
-
-        st.markdown("""
-        <div class="section-head">
-          <span class="num">🎯</span><h2>Inference Results</h2><div class="line"></div>
-        </div>""", unsafe_allow_html=True)
-
-        # Helper function to generate dynamic conic-gradient gauges with latency
-        def get_gauge_html(proba: float, title: str, latency: float, threshold: float = 0.38) -> str:
-            """Generates a conic-gradient HTML gauge panel for a single model result.
-
-            Args:
-                proba: Model output probability in [0.0, 1.0].
-                title: Short uppercase model label displayed above the gauge.
-                latency: Inference wall-clock time in milliseconds.
-                threshold: Decision boundary for the risk tier. Defaults to ``0.38``
-                    (cost-optimised M1 threshold).
-
-            Returns:
-                An HTML string for a ``<div class="result-panel">`` element ready
-                to be rendered via ``st.markdown``.
-            """
-            pct = int(proba * 100)
-            if proba >= 0.60:
-                color, risk_tier = "#ef4444", "HIGH"
-            elif proba >= threshold:
-                color, risk_tier = "#f59e0b", "MODERATE"
-            else:
-                color, risk_tier = "#10b981", "LOW"
-                
-            return f"""
-            <div class="result-panel">
-                <div style="font-family:'JetBrains Mono'; font-size:0.8rem; font-weight:700; color:#5eead4; letter-spacing:0.1em; margin-bottom:0.3rem;">
-                    {title}
-                </div>
-                <div style="font-family:'JetBrains Mono'; font-size:0.65rem; color:#64748b; margin-bottom:1.5rem;">
-                    latency · {latency:.1f}ms
-                </div>
-                <div class="gauge-wrapper" style="background: conic-gradient({color} {pct}%, rgba(255,255,255,0.05) {pct}%);">
-                    <div class="gauge-inner">
-                        <span class="gauge-val">{pct}%</span>
-                        <span class="gauge-lbl">PROBABILITY</span>
-                    </div>
-                </div>
-                <div class="risk-badge risk-{risk_tier}">{risk_tier} RISK</div>
-                <p style="font-size: 0.8rem; color: #64748b; margin-top: 0.5rem;">
-                    Decision Threshold: {threshold}
-                </p>
-            </div>
-            """
-
-        col_m1, col_m2 = st.columns(2, gap="large")
+        # --- Run all models and persist results in session_state ---
         proba1, proba2 = None, None
+        pred1, pred2 = None, None
+        conf1, conf2 = None, None
         latency_m1, latency_m2 = 0, 0
+        los_label = los_conf = los_css = None
+        nlp_label = nlp_conf = nlp_css = nlp_explanation = None
 
         # ── Model 1 ──────────────────────────────────────────────────
-        with col_m1:
-            with st.spinner("Running Model 1 — XGBoost…"):
-                t0 = time.perf_counter()
-                try:
-                    pred1, proba1, conf1 = predict_m1(patient_dict)
-                    latency_m1 = (time.perf_counter() - t0) * 1000
-                    st.markdown(get_gauge_html(proba1, "M1 · XGBOOST ENSEMBLE", latency_m1, threshold=0.38), unsafe_allow_html=True)
-                except Exception:
-                    logger.error("M1 prediction failed", exc_info=True)
-                    st.error("Model 1 could not complete the prediction. The issue has been logged — please try again or contact support.")
+        with st.spinner("Running Model 1 — XGBoost…"):
+            t0 = time.perf_counter()
+            try:
+                pred1, proba1, conf1 = predict_m1(patient_dict)
+                latency_m1 = (time.perf_counter() - t0) * 1000
+                st.session_state["m1_result"] = {
+                    "proba": proba1, "pred": pred1,
+                    "latency": latency_m1, "conf": conf1,
+                }
+            except Exception:
+                logger.error("M1 prediction failed", exc_info=True)
+                st.error("Model 1 could not complete the prediction. The issue has been logged — please try again or contact support.")
 
         # ── Model 2 ──────────────────────────────────────────────────
-        with col_m2:
-            with st.spinner("Running Model 2 — DNN…"):
-                t0 = time.perf_counter()
-                try:
-                    pred2, proba2, conf2 = predict_m2(patient_dict)
-                    latency_m2 = (time.perf_counter() - t0) * 1000
-                    st.markdown(get_gauge_html(proba2, "M2 · DEEP LEARNING DNN", latency_m2, threshold=0.38), unsafe_allow_html=True)
-                except Exception:
-                    logger.error("M2 prediction failed", exc_info=True)
-                    st.error("Model 2 could not complete the prediction. The issue has been logged — please try again or contact support.")
+        with st.spinner("Running Model 2 — DNN…"):
+            t0 = time.perf_counter()
+            try:
+                pred2, proba2, conf2 = predict_m2(patient_dict)
+                latency_m2 = (time.perf_counter() - t0) * 1000
+                st.session_state["m2_result"] = {
+                    "proba": proba2, "pred": pred2,
+                    "latency": latency_m2, "conf": conf2,
+                }
+            except Exception:
+                logger.error("M2 prediction failed", exc_info=True)
+                st.error("Model 2 could not complete the prediction. The issue has been logged — please try again or contact support.")
 
-            # --- Model 5 Innovation Section ---
-        st.markdown("""<div class="section-head">
-          <span class="num">⚡</span><h2>Innovation: Capacity Planning</h2><div class="line"></div>
-        </div>""", unsafe_allow_html=True)
-
+        # ── Model 5 Innovation ────────────────────────────────────────
         with st.spinner("Analyzing capacity requirements (Model 5)..."):
             try:
                 los_label, los_conf, los_css = predict_m5(patient_dict)
-                
-                st.markdown(f"""<div class="gcard" style="border-color:rgba(34,211,238,0.4);">
-                    <span class="tag">M5 · LENGTH OF STAY PREDICTOR</span>
-                    <h3 style="margin-top:0.5rem;">Predicted Capacity Requirement</h3>
-                    <div style="display:flex; align-items:center; gap:20px; margin:1rem 0;">
-                        <div class="{los_css}" style="flex:1; font-size:1.2rem; padding:20px;">{los_label}</div>
-                        <div class="stat" style="width:150px;">
-                            <div class="label">CONFIDENCE</div>
-                            <div class="val">{los_conf*100:.1f}%</div>
-                        </div>
-                    </div>
-                    <p style="font-size:0.85rem; color:#94a3b8!important;">
-                        <strong>Clinical Utility:</strong> This model assists in early discharge planning and 
-                        bed management by predicting the expected duration of stay upon admission.
-                    </p>
-                </div>""", unsafe_allow_html=True)
+                st.session_state["m5_result"] = {
+                    "label": los_label, "conf": los_conf, "css": los_css,
+                }
             except Exception:
                 logger.error("M5 prediction failed", exc_info=True)
                 st.error("Capacity Planning model could not complete the prediction. The issue has been logged — please try again or contact support.")
 
-        # --- Model 4: NLP Results ---
-        
-        st.markdown("""<div class="section-head">
-          <span class="num">04</span><h2>NLP Intelligence</h2><div class="line"></div>
-        </div>""", unsafe_allow_html=True)
-
+        # ── Model 4 NLP ───────────────────────────────────────────────
         with st.spinner("Analyzing clinical sentiment with Meta LSTM..."):
             try:
-                # We pass the variables directly from the form inputs
                 nlp_label, nlp_conf, nlp_css, nlp_explanation = predict_m4(clinical_notes, nlp_drug, nlp_cond)
-                
-                st.markdown(f"""
-                <div class="gcard">
-                    <span class="tag">M4 · META LSTM + METADATA</span>
-                    <h3>Clinical Sentiment Analysis</h3>
-                    <div class="{nlp_css}" style="margin:1rem 0; padding:15px; font-size:1.1rem; border-radius:10px; text-align:center; font-weight:700;">
-                        {nlp_label}
-                    </div>
-                    <div style="display:flex; gap:8px; margin-top:0.8rem;">
-                        <div class="stat" style="flex:1;">
-                            <div class="label">NLP CONFIDENCE</div>
-                            <div class="val">{nlp_conf*100:.1f}%</div>
-                        </div>
-                    </div>
-                    <p style="font-size:0.85rem; color:#94a3b8!important; margin-top:1rem;">
-                        <strong>Insight:</strong> {nlp_explanation}
-                    </p>
-                </div>""", unsafe_allow_html=True)
+                st.session_state["m4_result"] = {
+                    "label": nlp_label, "conf": nlp_conf,
+                    "css": nlp_css, "explanation": nlp_explanation,
+                }
             except Exception:
                 logger.error("M4 prediction failed", exc_info=True)
                 st.error("NLP Intelligence model could not complete the analysis. The issue has been logged — please try again or contact support.")
 
-        # ── Consensus ─────────────────────────────────────────────────
+        # ── Consensus — store in session_state so it survives re-runs ─
         if proba1 is not None and proba2 is not None:
-            agreement       = "AGREE" if pred1 == pred2 else "DISAGREE"
-            agreement_color = "#5eead4" if agreement == "AGREE" else "#fbbf24"
-            avg_proba       = (proba1 + proba2) / 2
+            st.session_state["_syn_p1"] = proba1
+            st.session_state["_syn_p2"] = proba2
+            st.session_state["_syn_m5"] = los_label if los_label is not None else "Unavailable"
+            st.session_state["_syn_m4_label"] = nlp_label if nlp_label is not None else "Unavailable"
+            st.session_state["_syn_m4_expl"]  = nlp_explanation if nlp_explanation is not None else ""
+            st.session_state["_con_pred1"] = pred1
+            st.session_state["_con_pred2"] = pred2
+            st.session_state["_con_lat1"]  = latency_m1
+            st.session_state["_con_lat2"]  = latency_m2
 
-            st.markdown("""
-            <div class="section-head">
-              <span class="num">⊕</span><h2>Consensus</h2><div class="line"></div>
-            </div>""", unsafe_allow_html=True)
+    # ── CSS for gauges — injected always so persisted cards render correctly ──
+    st.markdown("""
+    <style>
+    .result-panel {
+        background: rgba(15,30,52,0.6);
+        border: 1px solid rgba(34,211,238,0.15);
+        border-radius: 16px;
+        padding: 2rem 1rem;
+        text-align: center;
+        position: relative;
+        overflow: hidden;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        margin-bottom: 1rem;
+    }
+    .gauge-wrapper {
+        position: relative;
+        width: 160px;
+        height: 160px;
+        margin: 0 auto 1.5rem auto;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(0,0,0,0.2);
+        box-shadow: inset 0 0 20px rgba(0,0,0,0.5);
+    }
+    .gauge-inner {
+        position: absolute;
+        width: 130px;
+        height: 130px;
+        background: #0b1121;
+        border-radius: 50%;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        z-index: 10;
+    }
+    .gauge-val {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 2.2rem;
+        font-weight: 800;
+        line-height: 1;
+        color: white;
+    }
+    .gauge-lbl {
+        font-size: 0.7rem;
+        color: #64748b;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        margin-top: 4px;
+    }
+    .risk-badge {
+        display: inline-block;
+        padding: 0.4rem 1rem;
+        border-radius: 999px;
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 0.85rem;
+        font-weight: 700;
+        letter-spacing: 0.05em;
+        margin-bottom: 0.5rem;
+    }
+    .risk-LOW { background: rgba(16,185,129,0.15); color: #10b981; border: 1px solid rgba(16,185,129,0.3); }
+    .risk-MODERATE { background: rgba(245,158,11,0.15); color: #f59e0b; border: 1px solid rgba(245,158,11,0.3); }
+    .risk-HIGH { background: rgba(239,68,68,0.15); color: #ef4444; border: 1px solid rgba(239,68,68,0.3); }
+    </style>
+    """, unsafe_allow_html=True)
 
-            cc1, cc2, cc3, cc4 = st.columns(4)
-            cc1.markdown(f"""
-            <div class="stat">
-              <div class="label">MODEL AGREEMENT</div>
-              <div class="val" style="color:{agreement_color};">{agreement}</div>
-              <div class="delta">consensus check</div>
-            </div>""", unsafe_allow_html=True)
-            cc2.markdown(f"""
-            <div class="stat">
-              <div class="label">AVG PROBABILITY</div>
-              <div class="val">{avg_proba*100:.1f}%</div>
-              <div class="delta">M1 + M2 average</div>
-            </div>""", unsafe_allow_html=True)
-            cc3.markdown(f"""
-            <div class="stat">
-              <div class="label">DELTA M1 ↔ M2</div>
-              <div class="val">{abs(proba1-proba2)*100:.1f}pp</div>
-              <div class="delta">disagreement gap</div>
-            </div>""", unsafe_allow_html=True)
-            cc4.markdown(f"""
-            <div class="stat">
-              <div class="label">TOTAL LATENCY</div>
-              <div class="val">{(latency_m1+latency_m2):.0f}ms</div>
-              <div class="delta">end-to-end</div>
-            </div>""", unsafe_allow_html=True)
+    def get_gauge_html(proba: float, title: str, latency: float, threshold: float = 0.38) -> str:
+        pct = int(proba * 100)
+        if proba >= 0.60:
+            color, risk_tier = "#ef4444", "HIGH"
+        elif proba >= threshold:
+            color, risk_tier = "#f59e0b", "MODERATE"
+        else:
+            color, risk_tier = "#10b981", "LOW"
+        return f"""
+        <div class="result-panel">
+            <div style="font-family:'JetBrains Mono'; font-size:0.8rem; font-weight:700; color:#5eead4; letter-spacing:0.1em; margin-bottom:0.3rem;">
+                {title}
+            </div>
+            <div style="font-family:'JetBrains Mono'; font-size:0.65rem; color:#64748b; margin-bottom:1.5rem;">
+                latency · {latency:.1f}ms
+            </div>
+            <div class="gauge-wrapper" style="background: conic-gradient({color} {pct}%, rgba(255,255,255,0.05) {pct}%);">
+                <div class="gauge-inner">
+                    <span class="gauge-val">{pct}%</span>
+                    <span class="gauge-lbl">PROBABILITY</span>
+                </div>
+            </div>
+            <div class="risk-badge risk-{risk_tier}">{risk_tier} RISK</div>
+            <p style="font-size: 0.8rem; color: #64748b; margin-top: 0.5rem;">
+                Decision Threshold: {threshold}
+            </p>
+        </div>
+        """
 
-            # Clinical recommendation
-            high = max(proba1, proba2)
-            if high >= 0.65:
-                rec = ("⚠ Recommend enhanced discharge planning, scheduled "
-                       "follow-up within 7 days, and medication reconciliation.")
-                rec_color = "#fca5a5"
-            elif high >= 0.40:
-                rec = ("⚡ Standard discharge with phone follow-up within 14 days. "
-                       "Monitor for medication adherence.")
-                rec_color = "#fcd34d"
-            else:
-                rec = "✓ Standard discharge protocol. Routine follow-up sufficient."
-                rec_color = "#5eead4"
+    # ── Render persisted M1 / M2 gauges ──────────────────────────────
+    if "m1_result" in st.session_state or "m2_result" in st.session_state:
+        st.markdown("""
+        <div class="section-head">
+          <span class="num">🎯</span><h2>Inference Results</h2><div class="line"></div>
+        </div>""", unsafe_allow_html=True)
+        col_m1, col_m2 = st.columns(2, gap="large")
+        with col_m1:
+            if "m1_result" in st.session_state:
+                r = st.session_state["m1_result"]
+                st.markdown(get_gauge_html(r["proba"], "M1 · XGBOOST ENSEMBLE", r["latency"], threshold=0.38), unsafe_allow_html=True)
+        with col_m2:
+            if "m2_result" in st.session_state:
+                r = st.session_state["m2_result"]
+                st.markdown(get_gauge_html(r["proba"], "M2 · DEEP LEARNING DNN", r["latency"], threshold=0.38), unsafe_allow_html=True)
 
-            st.markdown(f"""
-            <div class="gcard" style="border-color:rgba(94,234,212,0.3); margin-top:1rem;">
-              <span class="tag">CLINICAL RECOMMENDATION</span>
-              <p style="color:{rec_color}!important; font-size:1rem;
-                        margin-top:0.5rem; line-height:1.6; font-weight:500;">{rec}</p>
-            </div>""", unsafe_allow_html=True)
+    # ── Render persisted M5 card ──────────────────────────────────────
+    if "m5_result" in st.session_state:
+        r5 = st.session_state["m5_result"]
+        st.markdown("""<div class="section-head">
+          <span class="num">⚡</span><h2>Innovation: Capacity Planning</h2><div class="line"></div>
+        </div>""", unsafe_allow_html=True)
+        st.markdown(f"""<div class="gcard" style="border-color:rgba(34,211,238,0.4);">
+            <span class="tag">M5 · LENGTH OF STAY PREDICTOR</span>
+            <h3 style="margin-top:0.5rem;">Predicted Capacity Requirement</h3>
+            <div style="display:flex; align-items:center; gap:20px; margin:1rem 0;">
+                <div class="{r5['css']}" style="flex:1; font-size:1.2rem; padding:20px;">{r5['label']}</div>
+                <div class="stat" style="width:150px;">
+                    <div class="label">CONFIDENCE</div>
+                    <div class="val">{r5['conf']*100:.1f}%</div>
+                </div>
+            </div>
+            <p style="font-size:0.85rem; color:#94a3b8!important;">
+                <strong>Clinical Utility:</strong> This model assists in early discharge planning and
+                bed management by predicting the expected duration of stay upon admission.
+            </p>
+        </div>""", unsafe_allow_html=True)
+
+    # ── Render persisted M4 card ──────────────────────────────────────
+    if "m4_result" in st.session_state:
+        r4 = st.session_state["m4_result"]
+        st.markdown("""<div class="section-head">
+          <span class="num">04</span><h2>NLP Intelligence</h2><div class="line"></div>
+        </div>""", unsafe_allow_html=True)
+        st.markdown(f"""
+        <div class="gcard">
+            <span class="tag">M4 · META LSTM + METADATA</span>
+            <h3>Clinical Sentiment Analysis</h3>
+            <div class="{r4['css']}" style="margin:1rem 0; padding:15px; font-size:1.1rem; border-radius:10px; text-align:center; font-weight:700;">
+                {r4['label']}
+            </div>
+            <div style="display:flex; gap:8px; margin-top:0.8rem;">
+                <div class="stat" style="flex:1;">
+                    <div class="label">NLP CONFIDENCE</div>
+                    <div class="val">{r4['conf']*100:.1f}%</div>
+                </div>
+            </div>
+            <p style="font-size:0.85rem; color:#94a3b8!important; margin-top:1rem;">
+                <strong>Insight:</strong> {r4['explanation']}
+            </p>
+        </div>""", unsafe_allow_html=True)
+
+    # ── Render persisted Consensus section ───────────────────────────
+    if "_syn_p1" in st.session_state:
+        _p1   = st.session_state["_syn_p1"]
+        _p2   = st.session_state["_syn_p2"]
+        _pred1 = st.session_state.get("_con_pred1")
+        _pred2 = st.session_state.get("_con_pred2")
+        _lat1  = st.session_state.get("_con_lat1", 0)
+        _lat2  = st.session_state.get("_con_lat2", 0)
+        _agreement       = "AGREE" if _pred1 == _pred2 else "DISAGREE"
+        _agreement_color = "#5eead4" if _agreement == "AGREE" else "#fbbf24"
+        _avg_proba       = (_p1 + _p2) / 2
+        _high = max(_p1, _p2)
+        if _high >= 0.65:
+            _rec       = ("⚠ Recommend enhanced discharge planning, scheduled "
+                          "follow-up within 7 days, and medication reconciliation.")
+            _rec_color = "#fca5a5"
+        elif _high >= 0.40:
+            _rec       = ("⚡ Standard discharge with phone follow-up within 14 days. "
+                          "Monitor for medication adherence.")
+            _rec_color = "#fcd34d"
+        else:
+            _rec       = "✓ Standard discharge protocol. Routine follow-up sufficient."
+            _rec_color = "#5eead4"
 
         st.markdown("""
+        <div class="section-head">
+          <span class="num">⊕</span><h2>Consensus</h2><div class="line"></div>
+        </div>""", unsafe_allow_html=True)
+        cc1, cc2, cc3, cc4 = st.columns(4)
+        cc1.markdown(f"""
+        <div class="stat">
+          <div class="label">MODEL AGREEMENT</div>
+          <div class="val" style="color:{_agreement_color};">{_agreement}</div>
+          <div class="delta">consensus check</div>
+        </div>""", unsafe_allow_html=True)
+        cc2.markdown(f"""
+        <div class="stat">
+          <div class="label">AVG PROBABILITY</div>
+          <div class="val">{_avg_proba*100:.1f}%</div>
+          <div class="delta">M1 + M2 average</div>
+        </div>""", unsafe_allow_html=True)
+        cc3.markdown(f"""
+        <div class="stat">
+          <div class="label">DELTA M1 ↔ M2</div>
+          <div class="val">{abs(_p1-_p2)*100:.1f}pp</div>
+          <div class="delta">disagreement gap</div>
+        </div>""", unsafe_allow_html=True)
+        cc4.markdown(f"""
+        <div class="stat">
+          <div class="label">TOTAL LATENCY</div>
+          <div class="val">{(_lat1+_lat2):.0f}ms</div>
+          <div class="delta">end-to-end</div>
+        </div>""", unsafe_allow_html=True)
+        st.markdown(f"""
+        <div class="gcard" style="border-color:rgba(94,234,212,0.3); margin-top:1rem;">
+          <span class="tag">CLINICAL RECOMMENDATION</span>
+          <p style="color:{_rec_color}!important; font-size:1rem;
+                    margin-top:0.5rem; line-height:1.6; font-weight:500;">{_rec}</p>
+        </div>""", unsafe_allow_html=True)
+
+    # ── AI Clinical Synthesis — outside if submitted so button survives re-runs ──
+    if "_syn_p1" in st.session_state:
+        st.markdown("""
+        <div class="section-head">
+          <span class="num">🧠</span><h2>AI Clinical Synthesis</h2><div class="line"></div>
+        </div>""", unsafe_allow_html=True)
+
+        st.markdown("""
+        <p style="font-size:0.82rem; color:#64748b; margin-bottom:0.8rem;
+                  font-family:'JetBrains Mono',monospace; letter-spacing:0.03em;">
+            POWERED BY LLAMA 3.1 · GROQ · GENERATIVE AI CONSENSUS REPORT
+        </p>""", unsafe_allow_html=True)
+
+        if st.button("⚕️ Generate AI Clinical Consensus Report"):
+            with st.spinner("Synthesizing multi-model diagnostics with Llama AI..."):
+                st.session_state["synthesis_result"] = generate_clinical_synthesis(
+                    m1_proba=st.session_state["_syn_p1"],
+                    m2_proba=st.session_state["_syn_p2"],
+                    m5_label=st.session_state["_syn_m5"],
+                    m4_label=st.session_state["_syn_m4_label"],
+                    m4_explanation=st.session_state["_syn_m4_expl"],
+                )
+
+        if "synthesis_result" in st.session_state:
+            synthesis = st.session_state["synthesis_result"]
+            st.markdown(f"""
+            <div style="
+                background: linear-gradient(135deg, rgba(15,30,52,0.8) 0%, rgba(17,44,74,0.8) 100%);
+                border: 1px solid rgba(94,234,212,0.35);
+                border-radius: 14px;
+                padding: 1.8rem 2rem;
+                box-shadow: 0 8px 32px rgba(34,211,238,0.08), inset 0 1px 0 rgba(94,234,212,0.1);
+                margin-top: 0.5rem;
+            ">
+                <div style="display:flex; align-items:center; gap:10px; margin-bottom:1.2rem;">
+                    <span style="font-size:1.3rem;">🧠</span>
+                    <span style="font-family:'JetBrains Mono',monospace; font-size:0.7rem;
+                                 font-weight:700; color:#5eead4; text-transform:uppercase;
+                                 letter-spacing:0.12em;">
+                        AI CLINICAL SYNTHESIS · LLAMA 3.1 via GROQ
+                    </span>
+                </div>
+                <div style="font-size:0.93rem; color:#e2e8f0; line-height:1.75;
+                            white-space:pre-wrap; font-family:'Inter',sans-serif;">
+{synthesis}
+                </div>
+                <div style="margin-top:1.2rem; padding-top:1rem;
+                            border-top:1px solid rgba(94,234,212,0.1);
+                            font-size:0.72rem; color:#475569;
+                            font-family:'JetBrains Mono',monospace;">
+                    ⚠ AI-GENERATED SYNTHESIS · FOR INVESTIGATIONAL USE ONLY · NOT A CLINICAL DIAGNOSIS
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            if st.button("🗑️ Clear Synthesis"):
+                del st.session_state["synthesis_result"]
+                st.rerun()
+
+    st.markdown("""
         <div class="disclaimer">
           <strong>Clinical Decision Support Notice.</strong> Predictions are
           intended to assist — not replace — qualified clinical judgment.
