@@ -3052,6 +3052,307 @@ def page_predict() -> None:
                 del st.session_state["synthesis_result"]
                 st.rerun()
 
+    # ── AI Clinical Copilot ───────────────────────────────────────────────────
+    if "_syn_p1" in st.session_state:
+        st.markdown("""
+        <div class="section-head">
+          <span class="num">💬</span><h2>AI Clinical Copilot</h2><div class="line"></div>
+        </div>""", unsafe_allow_html=True)
+
+        st.markdown("""
+        <p style="font-size:0.82rem; color:#64748b; margin-bottom:1rem;
+                  font-family:'JetBrains Mono',monospace; letter-spacing:0.03em;">
+            INTERACTIVE CLINICAL DECISION SUPPORT &nbsp;·&nbsp; LLAMA 3.1 via GROQ &nbsp;·&nbsp; FOLLOW-UP QUERIES
+        </p>""", unsafe_allow_html=True)
+
+        # Initialise persistent chat history
+        if "chat_history" not in st.session_state:
+            st.session_state.chat_history = []
+
+        # ── System prompt — embeds live patient context ──────────────────────
+        _copilot_system_prompt = (
+            "You are an advanced clinical decision support agent integrated into a "
+            "hospital AI command center. You communicate exclusively using precise "
+            "medical and clinical nomenclature. Reference validated clinical scoring "
+            "systems (LACE Index, HOSPITAL Score, Charlson Comorbidity Index, "
+            "APACHE II) and ICD-10-CM categories where applicable. Frame all "
+            "recommendations within evidence-based care pathways and institutional "
+            "antimicrobial/discharge stewardship protocols. Do not use lay language. "
+            "Be concise, actionable, and unambiguous.\n\n"
+            "CURRENT PATIENT — MULTI-MODEL AI DIAGNOSTIC OUTPUTS:\n"
+            f"  • Readmission Risk — XGBoost Ensemble: {st.session_state['_syn_p1']*100:.1f}%\n"
+            f"  • Readmission Risk — Deep Neural Network: {st.session_state['_syn_p2']*100:.1f}%\n"
+            f"  • Predicted Length of Stay (M5 Capacity Classifier): {st.session_state['_syn_m5']}\n"
+            f"  • Clinical Notes Sentiment Classification (NLP M4): {st.session_state['_syn_m4_label']}\n"
+            f"  • NLP Explanatory Context: {st.session_state['_syn_m4_expl']}\n\n"
+            "Respond only within the scope of these outputs and validated clinical evidence."
+        )
+
+        # ── Chat-specific CSS injection ───────────────────────────────────────
+        st.markdown("""
+        <style>
+        /* ── Scrollable message window — top half of the widget ── */
+        [data-testid="stVerticalBlockBorderWrapper"] {
+            background: rgba(11,17,33,0.95) !important;
+            border: 1px solid rgba(34,211,238,0.2) !important;
+            border-radius: 12px 12px 0 0 !important;
+            padding: 0 !important;
+        }
+
+        /* ── Input form row — visually attached below the window ── */
+        [data-testid="stForm"] {
+            background: rgba(11,17,33,0.98) !important;
+            border: 1px solid rgba(34,211,238,0.2) !important;
+            border-top: none !important;
+            border-radius: 0 0 12px 12px !important;
+            padding: 0.6rem 0.8rem !important;
+            margin-top: 0 !important;
+        }
+        [data-testid="stForm"] > div:first-child {
+            border: none !important;
+            background: transparent !important;
+            padding: 0 !important;
+        }
+
+        /* ── Text input inside form ── */
+        [data-testid="stForm"] [data-testid="stTextInput"] input {
+            background-color: rgba(15,30,52,0.6) !important;
+            border: 1px solid rgba(34,211,238,0.25) !important;
+            border-radius: 8px !important;
+            color: #e2e8f0 !important;
+            caret-color: #22d3ee !important;
+            font-family: 'Inter', sans-serif !important;
+            font-size: 0.88rem !important;
+        }
+        [data-testid="stForm"] [data-testid="stTextInput"] input::placeholder {
+            color: #475569 !important;
+        }
+        [data-testid="stForm"] [data-testid="stTextInput"] input:focus {
+            border-color: rgba(34,211,238,0.55) !important;
+            box-shadow: 0 0 0 2px rgba(34,211,238,0.08) !important;
+        }
+        [data-testid="stForm"] [data-testid="stTextInput"] label { display:none !important; }
+
+        /* ── Send button ── */
+        [data-testid="stFormSubmitButton"] button {
+            background: rgba(34,211,238,0.12) !important;
+            border: 1px solid rgba(34,211,238,0.35) !important;
+            color: #22d3ee !important;
+            border-radius: 8px !important;
+            font-size: 1.1rem !important;
+            height: 2.4rem !important;
+            width: 100% !important;
+            transition: all 0.15s ease !important;
+        }
+        [data-testid="stFormSubmitButton"] button:hover {
+            background: rgba(34,211,238,0.22) !important;
+            border-color: rgba(34,211,238,0.6) !important;
+        }
+        </style>
+        """, unsafe_allow_html=True)
+
+        # ── Quick-starter buttons ─────────────────────────────────────────────
+        _qs_col1, _qs_col2, _qs_col3 = st.columns(3)
+        _starter_prompt = None
+
+        with _qs_col1:
+            if st.button(
+                "🔬 Elaborate on NLP Risk",
+                use_container_width=True,
+                key="qs_nlp_risk",
+            ):
+                _starter_prompt = (
+                    "Elaborate on the clinical implications of the NLP-derived sentiment "
+                    "classification for this patient. Reference pertinent ICD-10-CM diagnostic "
+                    "categories, relevant comorbidity indices, and any validated predictive "
+                    "scoring instruments that contextualise the identified risk stratum."
+                )
+
+        with _qs_col2:
+            if st.button(
+                "📋 Suggest Discharge Protocol",
+                use_container_width=True,
+                key="qs_discharge",
+            ):
+                _starter_prompt = (
+                    "Propose a structured, evidence-based discharge protocol and post-acute "
+                    "care pathway for this patient. Include readmission risk mitigation "
+                    "strategies, transitional care interventions, recommended follow-up "
+                    "intervals, and criteria for expedited specialist referral."
+                )
+
+        with _qs_col3:
+            if st.button(
+                "⚠️ Identify Primary Risk Drivers",
+                use_container_width=True,
+                key="qs_risk_drivers",
+            ):
+                _starter_prompt = (
+                    "Identify and rank the primary clinical risk drivers indicated by the "
+                    "multi-model diagnostic outputs. For each driver, specify the underlying "
+                    "clinical correlates, associated ICD-10-CM codes where applicable, and "
+                    "prioritise targeted interventions by urgency and projected impact on "
+                    "30-day readmission prevention."
+                )
+
+        # ── HTML bubble renderer ──────────────────────────────────────────────
+        import html as _html_mod
+        import re as _re_mod
+
+        def _render_bubble(text: str, role: str) -> str:
+            safe = _html_mod.escape(text)
+            safe = _re_mod.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", safe)
+            safe = _re_mod.sub(r"\*(.+?)\*", r"<em>\1</em>", safe)
+            safe = _re_mod.sub(
+                r"(?m)^(\d+)\.\s+(.+)$",
+                r"<span style='display:block;margin:0.15rem 0 0.15rem 0.8rem;'>"
+                r"<span style='color:#94a3b8;'>\1.</span> \2</span>",
+                safe,
+            )
+            safe = _re_mod.sub(
+                r"(?m)^-\s+(.+)$",
+                r"<span style='display:block;margin:0.15rem 0 0.15rem 0.8rem;'>"
+                r"<span style='color:#22d3ee;'>&#9656;</span> \1</span>",
+                safe,
+            )
+            safe = safe.replace("\n\n", "</p><p style='margin:0.5rem 0 0;'>")
+            safe = safe.replace("\n", "<br>")
+            if role == "user":
+                return (
+                    "<div style='display:flex;flex-direction:column;"
+                    "align-items:flex-end;margin:0.45rem 0.6rem;'>"
+                    "<div style='font-size:0.62rem;font-weight:700;color:#22d3ee;"
+                    "font-family:\"JetBrains Mono\",monospace;letter-spacing:0.1em;"
+                    "margin-bottom:0.2rem;'>YOU</div>"
+                    "<div style='background:rgba(34,211,238,0.08);"
+                    "border:1px solid rgba(34,211,238,0.28);"
+                    "border-radius:14px 14px 2px 14px;"
+                    "padding:0.55rem 0.9rem;max-width:80%;"
+                    "font-size:0.875rem;color:#e2e8f0;line-height:1.6;"
+                    "font-family:\"Inter\",sans-serif;'>"
+                    f"<p style='margin:0;'>{safe}</p></div></div>"
+                )
+            return (
+                "<div style='display:flex;flex-direction:column;"
+                "align-items:flex-start;margin:0.45rem 0.6rem;'>"
+                "<div style='font-size:0.62rem;font-weight:700;color:#10b981;"
+                "font-family:\"JetBrains Mono\",monospace;letter-spacing:0.1em;"
+                "margin-bottom:0.2rem;'>COPILOT &nbsp;&middot;&nbsp; LLAMA 3.1</div>"
+                "<div style='background:rgba(6,12,24,0.85);"
+                "border:1px solid rgba(16,185,129,0.18);"
+                "border-radius:14px 14px 14px 2px;"
+                "padding:0.55rem 0.9rem;max-width:86%;"
+                "font-size:0.875rem;color:#cbd5e1;line-height:1.65;"
+                "font-family:\"Inter\",sans-serif;'>"
+                f"<p style='margin:0;'>{safe}</p></div></div>"
+            )
+
+        # ── Bounded scrollable message window ────────────────────────────────
+        with st.container(height=430, border=True):
+            if not st.session_state.chat_history:
+                st.markdown(
+                    "<div style='display:flex;align-items:center;"
+                    "justify-content:center;height:100%;padding:3rem 0;'>"
+                    "<p style='color:#334155;font-size:0.8rem;text-align:center;"
+                    "font-family:\"JetBrains Mono\",monospace;letter-spacing:0.04em;'>"
+                    "No messages yet.<br>Use the quick-starters above or type below.</p>"
+                    "</div>",
+                    unsafe_allow_html=True,
+                )
+            for _chat_msg in st.session_state.chat_history:
+                st.markdown(
+                    _render_bubble(_chat_msg["content"], _chat_msg["role"]),
+                    unsafe_allow_html=True,
+                )
+            # ── Auto-scroll to bottom after every render ──────────────────────
+            st.markdown(
+                """
+                <script>
+                (function() {
+                    // Target every Streamlit height-bounded vertical block wrapper
+                    var wrappers = window.parent.document.querySelectorAll(
+                        '[data-testid="stVerticalBlockBorderWrapper"]'
+                    );
+                    if (!wrappers.length) return;
+                    // The chat container is the last one on the page
+                    var chatWrapper = wrappers[wrappers.length - 1];
+                    // Walk up to find the overflow:auto scroll parent
+                    var el = chatWrapper;
+                    for (var i = 0; i < 8; i++) {
+                        el = el.parentElement;
+                        if (!el) break;
+                        var overflow = window.parent.getComputedStyle(el).overflowY;
+                        if (overflow === 'auto' || overflow === 'scroll') {
+                            el.scrollTop = el.scrollHeight;
+                            return;
+                        }
+                    }
+                    // Fallback: directly scroll the wrapper itself
+                    chatWrapper.scrollTop = chatWrapper.scrollHeight;
+                })();
+                </script>
+                """,
+                unsafe_allow_html=True,
+            )
+
+        # ── Inline input form — attached flush below the window ───────────────
+        with st.form(key="copilot_form", clear_on_submit=True):
+            _fi_col, _fb_col = st.columns([11, 1])
+            with _fi_col:
+                _typed_input = st.text_input(
+                    label="msg",
+                    label_visibility="collapsed",
+                    placeholder="Type a clinical query and press Enter or ➤",
+                    key="copilot_text_field",
+                )
+            with _fb_col:
+                _form_submitted = st.form_submit_button("➤", use_container_width=True)
+
+        _active_prompt = _starter_prompt or (
+            _typed_input.strip() if _form_submitted and _typed_input.strip() else None
+        )
+
+        if _active_prompt:
+            st.session_state.chat_history.append(
+                {"role": "user", "content": _active_prompt}
+            )
+            _reply = "⚠️ Copilot unavailable: unknown error."
+            with st.spinner("ClearSight Copilot is reasoning…"):
+                try:
+                    from openai import OpenAI as _OpenAI  # noqa: PLC0415
+                    _copilot_client = _OpenAI(
+                        api_key=st.secrets.get("GROQ_API_KEY", ""),
+                        base_url="https://api.groq.com/openai/v1",
+                    )
+                    _copilot_messages = [
+                        {"role": "system", "content": _copilot_system_prompt}
+                    ] + [
+                        {"role": m["role"], "content": m["content"]}
+                        for m in st.session_state.chat_history
+                    ]
+                    _copilot_response = _copilot_client.chat.completions.create(
+                        model="llama-3.1-8b-instant",
+                        max_tokens=600,
+                        temperature=0.25,
+                        messages=_copilot_messages,
+                    )
+                    _reply = _copilot_response.choices[0].message.content
+                except Exception as _copilot_err:
+                    logger.error(
+                        "Copilot API call failed: %s", _copilot_err, exc_info=True
+                    )
+                    _reply = f"⚠️ Copilot unavailable: {_copilot_err}"
+            st.session_state.chat_history.append(
+                {"role": "assistant", "content": _reply}
+            )
+            st.rerun()
+
+        # ── Clear conversation ────────────────────────────────────────────────
+        if st.session_state.chat_history:
+            if st.button("🗑️ Clear Conversation", key="clear_copilot_chat"):
+                st.session_state.chat_history = []
+                st.rerun()
+
     st.markdown("""
         <div class="disclaimer">
           <strong>Clinical Decision Support Notice.</strong> Predictions are
