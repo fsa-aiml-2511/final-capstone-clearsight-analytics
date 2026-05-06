@@ -2007,6 +2007,137 @@ def page_home() -> None:
     </div>
     """, unsafe_allow_html=True)
 
+    # ========== AI CLINICAL SYNTHESIS LAYER CARD ==========
+    st.markdown("""
+    <style>
+    @keyframes pulse-glow {
+        0%   { box-shadow: 0 0 0 1px rgba(34,211,238,0.15),
+                            0 8px 32px rgba(34,211,238,0.06); }
+        50%  { box-shadow: 0 0 0 1px rgba(94,234,212,0.35),
+                            0 16px 48px rgba(34,211,238,0.18),
+                            0 0 60px rgba(34,211,238,0.08); }
+        100% { box-shadow: 0 0 0 1px rgba(34,211,238,0.15),
+                            0 8px 32px rgba(34,211,238,0.06); }
+    }
+    @keyframes shimmer {
+        0%   { left: -100%; }
+        100% { left: 200%; }
+    }
+    </style>
+
+    <!-- ── Divider badge ─────────────────────────────────────────── -->
+    <div style="display:flex;align-items:center;gap:16px;margin:2.4rem 0 1.6rem;">
+      <div style="flex:1;height:1px;background:linear-gradient(90deg,transparent,rgba(34,211,238,0.25));"></div>
+      <div style="
+          font-family:'JetBrains Mono',monospace;
+          font-size:0.7rem;font-weight:700;letter-spacing:0.14em;
+          color:#22d3ee;text-transform:uppercase;
+          background:linear-gradient(135deg,rgba(34,211,238,0.12),rgba(94,234,212,0.06));
+          border:1px solid rgba(34,211,238,0.3);
+          border-radius:999px;padding:6px 18px;white-space:nowrap;
+      ">🤖 AI CLINICAL SYNTHESIS LAYER</div>
+      <div style="flex:1;height:1px;background:linear-gradient(90deg,rgba(34,211,238,0.25),transparent);"></div>
+    </div>
+
+    <!-- ── Copilot info card ─────────────────────────────────────── -->
+    <div style="
+        position:relative;overflow:hidden;
+        background:linear-gradient(135deg,rgba(34,211,238,0.12) 0%,rgba(94,234,212,0.06) 100%);
+        border:2px solid rgba(34,211,238,0.35);
+        border-radius:18px;padding:2rem 2.2rem 1.6rem;
+        margin-bottom:0.5rem;
+        animation:pulse-glow 4s ease-in-out infinite;
+    ">
+
+      <!-- shimmer sweep -->
+      <div style="
+          position:absolute;top:0;width:40%;height:100%;
+          background:linear-gradient(90deg,transparent,rgba(94,234,212,0.06),transparent);
+          animation:shimmer 3s ease-in-out infinite;pointer-events:none;
+      "></div>
+
+      <!-- header row: icon + title -->
+      <div style="display:flex;align-items:center;gap:1.4rem;margin-bottom:1.2rem;">
+        <div style="
+            flex-shrink:0;width:80px;height:80px;border-radius:18px;
+            background:linear-gradient(135deg,rgba(34,211,238,0.2),rgba(94,234,212,0.1));
+            border:1px solid rgba(34,211,238,0.35);
+            display:flex;align-items:center;justify-content:center;font-size:2.4rem;
+            box-shadow:0 0 24px rgba(34,211,238,0.2);
+        ">🤖</div>
+        <div>
+          <h2 style="
+              font-family:'Space Grotesk',sans-serif;font-size:1.8rem;font-weight:700;
+              margin:0 0 0.3rem;letter-spacing:-0.02em;
+              background:linear-gradient(120deg,#ffffff 0%,#5eead4 70%);
+              -webkit-background-clip:text;-webkit-text-fill-color:transparent;
+              background-clip:text;
+          ">AI Clinical Copilot</h2>
+          <div style="
+              font-family:'JetBrains Mono',monospace;font-size:0.75rem;font-weight:600;
+              color:#22d3ee;letter-spacing:0.06em;text-transform:uppercase;
+          ">Generative AI Integration &nbsp;&middot;&nbsp; Llama 3.1 via Groq</div>
+        </div>
+      </div>
+
+      <!-- description -->
+      <p style="
+          font-size:1.05rem;color:#94a3b8;line-height:1.7;margin-bottom:1.5rem;
+      ">
+        Synthesizes outputs from all 5 specialized models into natural language clinical narratives.
+        Provides discharge recommendations, risk interpretation, and interactive Q&amp;A with physicians
+        using state-of-the-art Large Language Models.
+      </p>
+
+      <!-- feature mini-cards grid -->
+      <div style="
+          display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));
+          gap:0.8rem;margin-bottom:1.6rem;
+      ">
+        <div style="
+            background:rgba(34,211,238,0.08);border:1px solid rgba(34,211,238,0.3);
+            border-radius:8px;padding:0.8rem;
+        ">
+          <div style="font-size:1.4rem;margin-bottom:0.4rem;">💬</div>
+          <div style="font-size:0.88rem;font-weight:600;color:#e2e8f0;margin-bottom:0.15rem;">Interactive Reasoning</div>
+          <div style="font-size:0.75rem;color:#64748b;">Ask follow-up questions</div>
+        </div>
+        <div style="
+            background:rgba(34,211,238,0.08);border:1px solid rgba(34,211,238,0.3);
+            border-radius:8px;padding:0.8rem;
+        ">
+          <div style="font-size:1.4rem;margin-bottom:0.4rem;">🔗</div>
+          <div style="font-size:0.88rem;font-weight:600;color:#e2e8f0;margin-bottom:0.15rem;">Multi-Model Synthesis</div>
+          <div style="font-size:0.75rem;color:#64748b;">Aggregates 5 AI outputs</div>
+        </div>
+        <div style="
+            background:rgba(34,211,238,0.08);border:1px solid rgba(34,211,238,0.3);
+            border-radius:8px;padding:0.8rem;
+        ">
+          <div style="font-size:1.4rem;margin-bottom:0.4rem;">📋</div>
+          <div style="font-size:0.88rem;font-weight:600;color:#e2e8f0;margin-bottom:0.15rem;">Clinical Protocols</div>
+          <div style="font-size:0.75rem;color:#64748b;">ICD-10, LACE, APACHE II</div>
+        </div>
+      </div>
+
+      <!-- CTA footer -->
+      <div style="
+          background:rgba(13,27,42,0.6);border-top:1px solid rgba(94,234,212,0.2);
+          border-radius:0 0 10px 10px;
+          margin:-1.6rem -2.2rem -1.6rem;padding:1.1rem 1.6rem;
+          text-align:center;
+      ">
+        <div style="font-size:0.8rem;font-weight:600;color:#5eead4;margin-bottom:0.3rem;">
+          💡 Available in Patient Risk Analysis
+        </div>
+        <div style="font-size:0.75rem;color:#475569;">
+          Navigate to <em style="color:#94a3b8;">Predict</em> &nbsp;→&nbsp; Run predictions &nbsp;→&nbsp; Access the AI Clinical Copilot tab
+        </div>
+      </div>
+
+    </div>
+    """, unsafe_allow_html=True)
+
     # ── SECTION 3: Model Performance ─────────────────────────────────────────
     st.markdown("""
     <div class="sec-div">
