@@ -66,3 +66,6 @@ data/raw/healthcare_retinal_images/
 saved_model/
 logs/
 .env
+
+# Streamlit secrets
+.streamlit/secrets.toml
