@@ -2776,6 +2776,177 @@ def page_predict() -> None:
     </div>
     """, unsafe_allow_html=True)
 
+    # ── QUICK LOAD PRESETS ─────────────────────────────────────────────────
+    _PRESETS = {
+        "🔴 Critical": {
+            "age": "[70-80)", "gender": "Male", "race": "AfricanAmerican",
+            "admission_type": "1 - Emergency", "discharge_disp": "3 - SNF",
+            "admission_src": "7 - Emergency Room",
+            "time_in_hosp": 10, "num_lab_procs": 72, "num_procs": 4,
+            "num_meds": 24, "num_diag": 9,
+            "num_outpatient": 0, "num_emergency": 3, "num_inpatient": 2,
+            "prior_inp_cum": 5,
+            "diag1": "428.0", "diag2": "250.01", "diag3": "401.9",
+            "med_spec": "Cardiology",
+            "insulin": "Up", "metformin": "Steady", "change": "Ch",
+            "diabetes_md": "Yes", "a1c": ">8", "max_glu": ">300",
+            "nlp_drug": "Insulin", "nlp_cond": "Heart Failure",
+            "clinical_notes": (
+                "Patient is a 74-year-old African American male admitted via ER with acute "
+                "decompensated heart failure. Patient appears disoriented and confused regarding "
+                "medication schedule. HbA1c critically elevated at 12.1%. Reports severe shortness "
+                "of breath and ankle edema. Non-compliant with fluid restriction. Family reports "
+                "missed doses over the past two weeks. Discharge planning complicated by lack of "
+                "social support."
+            ),
+        },
+        "🟢 Stable": {
+            "age": "[40-50)", "gender": "Female", "race": "Caucasian",
+            "admission_type": "3 - Elective", "discharge_disp": "1 - Home",
+            "admission_src": "1 - Physician Referral",
+            "time_in_hosp": 2, "num_lab_procs": 28, "num_procs": 1,
+            "num_meds": 5, "num_diag": 3,
+            "num_outpatient": 1, "num_emergency": 0, "num_inpatient": 0,
+            "prior_inp_cum": 0,
+            "diag1": "250.00", "diag2": "272.4", "diag3": "V58.67",
+            "med_spec": "InternalMedicine",
+            "insulin": "Steady", "metformin": "Steady", "change": "No",
+            "diabetes_md": "Yes", "a1c": "Norm", "max_glu": "Norm",
+            "nlp_drug": "Metformin", "nlp_cond": "Diabetes",
+            "clinical_notes": (
+                "Patient is a 44-year-old female admitted for routine diabetes management review. "
+                "She reports excellent adherence to medication regimen and dietary plan. Blood glucose "
+                "well controlled. Excellent recovery noted since last visit. Patient is highly motivated "
+                "and demonstrates strong health literacy. Discharge home planned for tomorrow. No "
+                "concerns at this time."
+            ),
+        },
+        "🟡 Consensus": {
+            "age": "[60-70)", "gender": "Male", "race": "Hispanic",
+            "admission_type": "2 - Urgent", "discharge_disp": "2 - Home Health Care",
+            "admission_src": "4 - Transfer from Hospital",
+            "time_in_hosp": 4, "num_lab_procs": 44, "num_procs": 2,
+            "num_meds": 15, "num_diag": 7,
+            "num_outpatient": 1, "num_emergency": 1, "num_inpatient": 1,
+            "prior_inp_cum": 2,
+            "diag1": "250.01", "diag2": "401.9", "diag3": "272.0",
+            "med_spec": "InternalMedicine",
+            "insulin": "Steady", "metformin": "Steady", "change": "Ch",
+            "diabetes_md": "Yes", "a1c": ">7", "max_glu": ">200",
+            "nlp_drug": "Metformin", "nlp_cond": "Diabetes",
+            "clinical_notes": (
+                "Patient is a 63-year-old Hispanic male with Type 2 Diabetes and hypertension, "
+                "admitted urgently following blood glucose spike. Patient reports severe anxiety about "
+                "managing medications at home due to financial constraints. Social work consult placed. "
+                "Patient expressed fear of losing job due to repeated hospitalizations. Moderate risk "
+                "for non-compliance identified. Discharge planning initiated with home health coordination."
+            ),
+        },
+        "🟠 Comorbidity": {
+            "age": "[80-90)", "gender": "Female", "race": "Caucasian",
+            "admission_type": "1 - Emergency", "discharge_disp": "3 - SNF",
+            "admission_src": "4 - Transfer from Hospital",
+            "time_in_hosp": 7, "num_lab_procs": 58, "num_procs": 3,
+            "num_meds": 19, "num_diag": 9,
+            "num_outpatient": 2, "num_emergency": 2, "num_inpatient": 1,
+            "prior_inp_cum": 3,
+            "diag1": "250.80", "diag2": "585.9", "diag3": "428.0",
+            "med_spec": "Nephrology",
+            "insulin": "Up", "metformin": "No", "change": "Ch",
+            "diabetes_md": "Yes", "a1c": ">8", "max_glu": ">300",
+            "nlp_drug": "Insulin", "nlp_cond": "Renal Failure",
+            "clinical_notes": (
+                "Patient is an 83-year-old female with complex comorbidities including Type 2 Diabetes "
+                "with renal complications, chronic kidney disease stage 3, and congestive heart failure. "
+                "Polypharmacy noted — patient reports significant confusion managing 19 medications. "
+                "Metformin discontinued due to renal function decline. Patient appears fatigued and shows "
+                "signs of cognitive decline. Family caregiver present but overwhelmed. Transfer to SNF "
+                "recommended for continued care."
+            ),
+        },
+        "🔵 NLP Alert": {
+            "age": "[50-60)", "gender": "Male", "race": "Other",
+            "admission_type": "1 - Emergency", "discharge_disp": "1 - Home",
+            "admission_src": "7 - Emergency Room",
+            "time_in_hosp": 3, "num_lab_procs": 32, "num_procs": 1,
+            "num_meds": 11, "num_diag": 5,
+            "num_outpatient": 0, "num_emergency": 5, "num_inpatient": 3,
+            "prior_inp_cum": 8,
+            "diag1": "250.01", "diag2": "296.20", "diag3": "311",
+            "med_spec": "Psychiatry",
+            "insulin": "Steady", "metformin": "Steady", "change": "No",
+            "diabetes_md": "Yes", "a1c": ">7", "max_glu": "None",
+            "nlp_drug": "Metformin", "nlp_cond": "Diabetes",
+            "clinical_notes": (
+                "Patient is a 54-year-old male with a history of Type 2 Diabetes and major depressive "
+                "disorder, presenting to the ER for the fifth time this year. Patient expresses feelings "
+                "of hopelessness and fear regarding his health prognosis. Reports inability to afford "
+                "medication and expresses passive ideation. Psychiatry consult placed. Social determinants "
+                "of health are the primary driver of repeated presentations. Despite relatively stable "
+                "physical metrics, patient is at high psychosocial risk."
+            ),
+        },
+    }
+
+    st.markdown("""
+    <div style="font-family:'JetBrains Mono',monospace; font-size:0.68rem; font-weight:700;
+                color:#5eead4; letter-spacing:0.12em; text-transform:uppercase;
+                padding-bottom:0.5rem; margin-bottom:0.4rem;
+                border-bottom:1px solid rgba(94,234,212,0.12);">
+        ⚡ Quick Load — Clinical Scenarios
+    </div>
+    """, unsafe_allow_html=True)
+
+    _ql_cols = st.columns(5)
+    _ql_labels = list(_PRESETS.keys())
+    _ql_hints  = [
+        "10d · 24 meds · ICD-9 428",
+        "2d · 5 meds · Elective",
+        "4d · 15 meds · Social risk",
+        "7d · 19 meds · Polypharmacy",
+        "3d · High visits · Depressive",
+    ]
+    for _col, _lbl, _hint in zip(_ql_cols, _ql_labels, _ql_hints):
+        with _col:
+            if st.button(_lbl, key=f"ql_{_lbl[:4]}", use_container_width=True, help=_hint):
+                st.session_state["_preset"] = _PRESETS[_lbl]
+                st.rerun()
+
+    st.markdown("<div style='margin-bottom:1.2rem;'></div>", unsafe_allow_html=True)
+
+    # ── Apply preset values to widget session-state keys before the form renders ──
+    if "_preset" in st.session_state:
+        _p = st.session_state["_preset"]
+        del st.session_state["_preset"]
+        st.session_state["sb_age"]            = _p.get("age",            "[60-70)")
+        st.session_state["sb_gender"]         = _p.get("gender",         "Male")
+        st.session_state["sb_race"]           = _p.get("race",           "Caucasian")
+        st.session_state["sb_admission_type"] = _p.get("admission_type", "1 - Emergency")
+        st.session_state["sb_discharge_disp"] = _p.get("discharge_disp", "1 - Home")
+        st.session_state["sb_admission_src"]  = _p.get("admission_src",  "7 - Emergency Room")
+        st.session_state["ni_days_hospital"]  = int(_p.get("time_in_hosp",   4))
+        st.session_state["ni_lab_procs"]      = int(_p.get("num_lab_procs", 44))
+        st.session_state["ni_procs"]          = int(_p.get("num_procs",      1))
+        st.session_state["ni_meds"]           = int(_p.get("num_meds",      15))
+        st.session_state["ni_diag"]           = int(_p.get("num_diag",       7))
+        st.session_state["ni_outpatient"]     = int(_p.get("num_outpatient", 0))
+        st.session_state["ni_emergency"]      = int(_p.get("num_emergency",  0))
+        st.session_state["ni_inpatient"]      = int(_p.get("num_inpatient",  0))
+        st.session_state["ni_prior_inp"]      = int(_p.get("prior_inp_cum",  0))
+        st.session_state["ti_diag1"]          = _p.get("diag1",    "250.01")
+        st.session_state["ti_diag2"]          = _p.get("diag2",    "428")
+        st.session_state["ti_diag3"]          = _p.get("diag3",    "401")
+        st.session_state["ti_med_spec"]       = _p.get("med_spec", "InternalMedicine")
+        st.session_state["sb_insulin"]        = _p.get("insulin",     "No")
+        st.session_state["sb_metformin"]      = _p.get("metformin",   "No")
+        st.session_state["sb_change"]         = _p.get("change",      "No")
+        st.session_state["sb_diabetes_md"]    = _p.get("diabetes_md", "Yes")
+        st.session_state["sb_a1c"]            = _p.get("a1c",         "None")
+        st.session_state["sb_max_glu"]        = _p.get("max_glu",     "None")
+        st.session_state["ti_nlp_drug"]       = _p.get("nlp_drug",    "Metformin")
+        st.session_state["ti_nlp_cond"]       = _p.get("nlp_cond",    "Diabetes")
+        st.session_state["ta_clinical_notes"] = _p.get("clinical_notes", "")
+
     with st.form("predict_form"):
 
         # ── Section 1: Demographics ─────────────────────────────────
@@ -2784,69 +2955,82 @@ def page_predict() -> None:
             age = r1a.selectbox("Age Bracket", [
                 '[0-10)','[10-20)','[20-30)','[30-40)','[40-50)',
                 '[50-60)','[60-70)','[70-80)','[80-90)','[90-100)'
-            ], index=6, help="Age group (matches encounter dataset format).")
-            gender = r1b.selectbox("Gender", ["Male", "Female"])
+            ], index=6, key="sb_age", help="Age group (matches encounter dataset format).")
+            gender = r1b.selectbox("Gender", ["Male", "Female"], key="sb_gender")
             race   = r1c.selectbox("Race", [
                 "Caucasian", "AfricanAmerican", "Hispanic", "Asian", "Other"
-            ])
+            ], key="sb_race")
             admission_type = r1d.selectbox("Admission Type", [
                 "1 - Emergency", "2 - Urgent", "3 - Elective",
                 "4 - Newborn", "5 - Not Available", "6 - NULL", "7 - Trauma Center"
-            ])
+            ], key="sb_admission_type")
 
             r2a, r2b = st.columns(2)
             discharge_disp = r2a.selectbox("Discharge Disposition", [
                 "1 - Home", "2 - Home Health Care", "3 - SNF",
                 "6 - Home w/ Home Health", "18 - Not Available",
-            ], help="Where patient was discharged to.")
+            ], key="sb_discharge_disp", help="Where patient was discharged to.")
             admission_src = r2b.selectbox("Admission Source", [
                 "1 - Physician Referral", "2 - Clinic Referral",
                 "4 - Transfer from Hospital", "7 - Emergency Room",
                 "9 - Not Available", "17 - NULL"
-            ])
+            ], key="sb_admission_src")
 
         # ── Section 2: Clinical Metrics ─────────────────────────────
         with st.expander("🏥 Clinical Metrics", expanded=False):
             st.markdown("**Current Encounter**")
             r3a, r3b, r3c, r3d, r3e = st.columns(5)
-            time_in_hosp  = r3a.number_input("Days in Hospital", 1, 14, 4)
-            num_lab_procs = r3b.number_input("Lab Procedures", 0, 132, 44)
-            num_procs     = r3c.number_input("Procedures", 0, 6, 1)
-            num_meds      = r3d.number_input("Medications", 1, 81, 15)
-            num_diag      = r3e.number_input("Diagnoses", 1, 16, 7)
+            time_in_hosp  = r3a.number_input("Days in Hospital", 1, 14, 4,
+                                              key="ni_days_hospital")
+            num_lab_procs = r3b.number_input("Lab Procedures", 0, 132, 44,
+                                              key="ni_lab_procs")
+            num_procs     = r3c.number_input("Procedures", 0, 6, 1, key="ni_procs")
+            num_meds      = r3d.number_input("Medications", 1, 81, 15, key="ni_meds")
+            num_diag      = r3e.number_input("Diagnoses", 1, 16, 7, key="ni_diag")
 
             st.markdown("**Prior Utilization (past 12 months)**")
             r4a, r4b, r4c, r4d = st.columns(4)
-            num_outpatient = r4a.number_input("Outpatient Visits", 0, 42, 0)
-            num_emergency  = r4b.number_input("Emergency Visits", 0, 76, 0)
+            num_outpatient = r4a.number_input("Outpatient Visits", 0, 42, 0,
+                                               key="ni_outpatient")
+            num_emergency  = r4b.number_input("Emergency Visits", 0, 76, 0,
+                                               key="ni_emergency")
             num_inpatient  = r4c.number_input("Inpatient Visits", 0, 21, 0,
+                              key="ni_inpatient",
                               help="Strong readmission predictor (per literature).")
-            prior_inp_cum  = r4d.number_input("Prior Inpatient (cumulative)", 0, 50, 0)
+            prior_inp_cum  = r4d.number_input("Prior Inpatient (cumulative)", 0, 50, 0,
+                                               key="ni_prior_inp")
 
         # ── Section 3: Diagnoses ────────────────────────────────────
         with st.expander("🩺 ICD-9 Diagnoses", expanded=False):
             st.markdown("**Top 3 diagnosis codes for this encounter**")
             r5a, r5b, r5c = st.columns(3)
-            diag1 = r5a.text_input("Primary (diag_1)", "250.01",
+            diag1 = r5a.text_input("Primary (diag_1)", "250.01", key="ti_diag1",
                      help="250.xx = diabetes, 428.xx = heart failure, 401.xx = hypertension")
-            diag2 = r5b.text_input("Secondary (diag_2)", "428")
-            diag3 = r5c.text_input("Tertiary (diag_3)", "401")
+            diag2 = r5b.text_input("Secondary (diag_2)", "428", key="ti_diag2")
+            diag3 = r5c.text_input("Tertiary (diag_3)", "401", key="ti_diag3")
             med_spec = st.text_input("Medical Specialty", "InternalMedicine",
+                                     key="ti_med_spec",
                                      help="Specialty of the attending physician.")
 
         # ── Section 4: Medications & Labs ───────────────────────────
         with st.expander("💊 Medications & Labs", expanded=False):
             st.markdown("**Diabetes Management**")
             r6a, r6b, r6c, r6d, r6e = st.columns(5)
-            insulin     = r6a.selectbox("Insulin",     ["No", "Steady", "Up", "Down"])
-            metformin   = r6b.selectbox("Metformin",   ["No", "Steady", "Up", "Down"])
+            insulin     = r6a.selectbox("Insulin",     ["No", "Steady", "Up", "Down"],
+                                        key="sb_insulin")
+            metformin   = r6b.selectbox("Metformin",   ["No", "Steady", "Up", "Down"],
+                                        key="sb_metformin")
             change      = r6c.selectbox("Med Changed?", ["No", "Ch"],
+                          key="sb_change",
                           help="Was any medication changed during this encounter?")
-            diabetes_md = r6d.selectbox("Diabetes Med?", ["Yes", "No"])
-            a1c         = r6e.selectbox("A1C Result",  ["None", "Norm", ">7", ">8"])
+            diabetes_md = r6d.selectbox("Diabetes Med?", ["Yes", "No"],
+                                        key="sb_diabetes_md")
+            a1c         = r6e.selectbox("A1C Result",  ["None", "Norm", ">7", ">8"],
+                                        key="sb_a1c")
 
             st.markdown("**Lab Results**")
-            max_glu = st.selectbox("Max Glucose Serum", ["None", "Norm", ">200", ">300"])
+            max_glu = st.selectbox("Max Glucose Serum", ["None", "Norm", ">200", ">300"],
+                                   key="sb_max_glu")
 
 
         # --- Section 5: Clinical Notes (Model 4 - NLP) ---
@@ -2860,13 +3044,16 @@ def page_predict() -> None:
             
             # These two fields are required by Wes's model metadata
             col_n1, col_n2 = st.columns(2)
-            nlp_drug = col_n1.text_input("Context Medication", value="Metformin")
-            nlp_cond = col_n2.text_input("Context Condition", value="Diabetes")
-            
+            nlp_drug = col_n1.text_input("Context Medication", value="Metformin",
+                                         key="ti_nlp_drug")
+            nlp_cond = col_n2.text_input("Context Condition", value="Diabetes",
+                                         key="ti_nlp_cond")
+
             clinical_notes = st.text_area(
                 "Physician/Nursing Progress Notes:",
                 placeholder="Example: Patient reports difficulty following the insulin regimen and shows signs of anxiety regarding discharge...",
-                height=150
+                height=150,
+                key="ta_clinical_notes",
             )
 
         st.markdown("")
