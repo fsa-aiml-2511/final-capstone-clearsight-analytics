@@ -3662,21 +3662,21 @@ ClearSight Analytics · Powered by XGBoost, DNN, Meta-LSTM, Llama 3.1
 
         # ── System prompt — embeds live patient context ──────────────────────
         _copilot_system_prompt = (
-            "You are an advanced clinical decision support agent integrated into a "
-            "hospital AI command center. You communicate exclusively using precise "
-            "medical and clinical nomenclature. Reference validated clinical scoring "
-            "systems (LACE Index, HOSPITAL Score, Charlson Comorbidity Index, "
-            "APACHE II) and ICD-10-CM categories where applicable. Frame all "
-            "recommendations within evidence-based care pathways and institutional "
-            "antimicrobial/discharge stewardship protocols. Do not use lay language. "
-            "Be concise, actionable, and unambiguous.\n\n"
+            "You are an expert Clinical Decision Support System (CDSS). You assist "
+            "physicians by analyzing predictive model outputs and patient metrics. "
+            "Use professional medical terminology. DO NOT provide definitive diagnoses. "
+            "Prioritize patient safety and base all recommendations strictly on the "
+            "provided context.\n\n"
             "CURRENT PATIENT — MULTI-MODEL AI DIAGNOSTIC OUTPUTS:\n"
-            f"  • Readmission Risk — XGBoost Ensemble: {st.session_state['_syn_p1']*100:.1f}%\n"
-            f"  • Readmission Risk — Deep Neural Network: {st.session_state['_syn_p2']*100:.1f}%\n"
+            f"  • Readmission Risk — XGBoost Ensemble (M1): {st.session_state['_syn_p1']*100:.1f}%\n"
+            f"  • Readmission Risk — Deep Neural Network (M2): {st.session_state['_syn_p2']*100:.1f}%\n"
             f"  • Predicted Length of Stay (M5 Capacity Classifier): {st.session_state['_syn_m5']}\n"
             f"  • Clinical Notes Sentiment Classification (NLP M4): {st.session_state['_syn_m4_label']}\n"
             f"  • NLP Explanatory Context: {st.session_state['_syn_m4_expl']}\n\n"
             "Respond only within the scope of these outputs and validated clinical evidence."
+            " CRITICAL RULE: YOU MUST ALWAYS END EVERY RESPONSE WITH THIS EXACT TEXT: "
+            "'\n\n\u26a0\ufe0f **Disclaimer:** This is an AI-generated analysis for investigational "
+            "use only. Always consult a licensed healthcare provider.'"
         )
 
         # ── Chat-specific CSS injection ───────────────────────────────────────
@@ -3752,11 +3752,23 @@ ClearSight Analytics · Powered by XGBoost, DNN, Meta-LSTM, Llama 3.1
                 use_container_width=True,
                 key="qs_nlp_risk",
             ):
+                _m4r = st.session_state.get("m4_result", {})
                 _starter_prompt = (
-                    "Elaborate on the clinical implications of the NLP-derived sentiment "
-                    "classification for this patient. Reference pertinent ICD-10-CM diagnostic "
-                    "categories, relevant comorbidity indices, and any validated predictive "
-                    "scoring instruments that contextualise the identified risk stratum."
+                    f"Elaborate on the clinical implications of the NLP-derived sentiment "
+                    f"classification for this patient.\n\n"
+                    f"PATIENT CONTEXT:\n"
+                    f"- Age Bracket: {st.session_state.get('sb_age', 'Unknown')}\n"
+                    f"- Gender: {st.session_state.get('sb_gender', 'Unknown')}\n"
+                    f"- Primary ICD-9 Diagnosis: {st.session_state.get('ti_diag1', 'Unknown')}\n"
+                    f"- Reported Drug (NLP input): {st.session_state.get('ti_nlp_drug', 'Unknown')}\n"
+                    f"- Reported Condition (NLP input): {st.session_state.get('ti_nlp_cond', 'Unknown')}\n"
+                    f"- M4 Meta-LSTM Sentiment Label: {_m4r.get('label', st.session_state.get('_syn_m4_label', 'Unknown'))}\n"
+                    f"- M4 Model Confidence: {_m4r.get('conf', 0)*100:.1f}%\n"
+                    f"- M4 Explanation: {_m4r.get('explanation', st.session_state.get('_syn_m4_expl', 'N/A'))}\n\n"
+                    "Reference pertinent ICD-10-CM diagnostic categories, relevant comorbidity "
+                    "indices (Charlson, LACE), and validated predictive scoring instruments. "
+                    "Identify all NLP-flagged risk signals and their specific clinical significance "
+                    "for 30-day readmission risk."
                 )
 
         with _qs_col2:
@@ -3765,11 +3777,32 @@ ClearSight Analytics · Powered by XGBoost, DNN, Meta-LSTM, Llama 3.1
                 use_container_width=True,
                 key="qs_discharge",
             ):
+                _m1r = st.session_state.get("m1_result", {})
+                _m5r = st.session_state.get("m5_result", {})
+                _m1_proba = _m1r.get("proba", st.session_state.get("_syn_p1", 0))
+                _m2_proba = st.session_state.get("_syn_p2", 0)
                 _starter_prompt = (
-                    "Propose a structured, evidence-based discharge protocol and post-acute "
-                    "care pathway for this patient. Include readmission risk mitigation "
-                    "strategies, transitional care interventions, recommended follow-up "
-                    "intervals, and criteria for expedited specialist referral."
+                    f"Generate a structured, safe 30-day discharge and care transition "
+                    f"protocol for this patient.\n\n"
+                    f"PATIENT CONTEXT:\n"
+                    f"- Age Bracket: {st.session_state.get('sb_age', 'Unknown')}\n"
+                    f"- Gender: {st.session_state.get('sb_gender', 'Unknown')}\n"
+                    f"- Race/Ethnicity: {st.session_state.get('sb_race', 'Unknown')}\n"
+                    f"- Admission Type: {st.session_state.get('sb_admission_type', 'Unknown')}\n"
+                    f"- Discharge Disposition: {st.session_state.get('sb_discharge_disp', 'Unknown')}\n"
+                    f"- Primary ICD-9 Diagnosis: {st.session_state.get('ti_diag1', 'Unknown')}\n"
+                    f"- Secondary Diagnosis: {st.session_state.get('ti_diag2', 'Unknown')}\n"
+                    f"- Total Medications: {st.session_state.get('ni_meds', 'Unknown')}\n"
+                    f"- Insulin Regimen: {st.session_state.get('sb_insulin', 'Unknown')}\n"
+                    f"- HbA1c Result: {st.session_state.get('sb_a1c', 'Unknown')}\n"
+                    f"- AI Readmission Risk — XGBoost M1: {_m1_proba*100:.1f}%\n"
+                    f"- AI Readmission Risk — DNN M2: {_m2_proba*100:.1f}%\n"
+                    f"- Predicted Length of Stay (M5): {_m5r.get('label', st.session_state.get('_syn_m5', 'Unknown'))}\n\n"
+                    "FORMAT REQUIREMENTS:\n"
+                    "- Provide a bulleted list of 3-4 immediate post-discharge actions.\n"
+                    "- Suggest specific follow-up timelines based on the readmission risk level.\n"
+                    "- Include a brief 'Red Flags' section for the patient to monitor at home.\n"
+                    "- Address medication reconciliation concerns given the active drug list."
                 )
 
         with _qs_col3:
@@ -3778,12 +3811,35 @@ ClearSight Analytics · Powered by XGBoost, DNN, Meta-LSTM, Llama 3.1
                 use_container_width=True,
                 key="qs_risk_drivers",
             ):
+                _m1r = st.session_state.get("m1_result", {})
+                _m2r = st.session_state.get("m2_result", {})
+                _m1_proba = _m1r.get("proba", st.session_state.get("_syn_p1", 0))
+                _m2_proba = _m2r.get("proba", st.session_state.get("_syn_p2", 0))
                 _starter_prompt = (
-                    "Identify and rank the primary clinical risk drivers indicated by the "
-                    "multi-model diagnostic outputs. For each driver, specify the underlying "
-                    "clinical correlates, associated ICD-10-CM codes where applicable, and "
-                    "prioritise targeted interventions by urgency and projected impact on "
-                    "30-day readmission prevention."
+                    f"Identify and rank the primary clinical risk drivers indicated by the "
+                    f"multi-model diagnostic outputs for this patient.\n\n"
+                    f"PATIENT CONTEXT:\n"
+                    f"- Age Bracket: {st.session_state.get('sb_age', 'Unknown')}\n"
+                    f"- Gender: {st.session_state.get('sb_gender', 'Unknown')}\n"
+                    f"- Admission Type: {st.session_state.get('sb_admission_type', 'Unknown')}\n"
+                    f"- Primary ICD-9 Diagnosis: {st.session_state.get('ti_diag1', 'Unknown')}\n"
+                    f"- Secondary Diagnoses: {st.session_state.get('ti_diag2', 'Unknown')}, "
+                    f"{st.session_state.get('ti_diag3', 'Unknown')}\n"
+                    f"- Number of Active Diagnoses: {st.session_state.get('ni_diag', 'Unknown')}\n"
+                    f"- Number of Medications: {st.session_state.get('ni_meds', 'Unknown')}\n"
+                    f"- Number of Procedures: {st.session_state.get('ni_procs', 'Unknown')}\n"
+                    f"- Prior Inpatient Visits: {st.session_state.get('ni_prior_inp', 'Unknown')}\n"
+                    f"- Emergency Visits (past year): {st.session_state.get('ni_emergency', 'Unknown')}\n"
+                    f"- HbA1c Result: {st.session_state.get('sb_a1c', 'Unknown')}\n"
+                    f"- Max Glucose Serum: {st.session_state.get('sb_max_glu', 'Unknown')}\n"
+                    f"- AI Readmission Risk — XGBoost M1: {_m1_proba*100:.1f}% "
+                    f"(confidence: {_m1r.get('conf', 0)*100:.1f}%)\n"
+                    f"- AI Readmission Risk — DNN M2: {_m2_proba*100:.1f}% "
+                    f"(confidence: {_m2r.get('conf', 0)*100:.1f}%)\n"
+                    f"- NLP Sentiment Classification (M4): {st.session_state.get('_syn_m4_label', 'Unknown')}\n\n"
+                    "For each risk driver: specify the underlying clinical correlates, "
+                    "associated ICD-10-CM codes where applicable, and prioritise targeted "
+                    "interventions by urgency and projected impact on 30-day readmission prevention."
                 )
 
         # ── HTML bubble renderer ──────────────────────────────────────────────
@@ -3923,8 +3979,8 @@ ClearSight Analytics · Powered by XGBoost, DNN, Meta-LSTM, Llama 3.1
                     ]
                     _copilot_response = _copilot_client.chat.completions.create(
                         model="llama-3.1-8b-instant",
-                        max_tokens=600,
-                        temperature=0.25,
+                        max_tokens=1024,
+                        temperature=0.2,
                         messages=_copilot_messages,
                     )
                     _reply = _copilot_response.choices[0].message.content
