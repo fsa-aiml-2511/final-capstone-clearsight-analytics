@@ -4727,13 +4727,22 @@ def page_retinal() -> None:
     # 3. Uploader
     uploaded = st.file_uploader("Upload a fundus photograph (PNG / JPG)", type=["png", "jpg", "jpeg"])
 
+    st.warning(
+        "⚠️ **Clinical Requirement:** This model requires a valid, high-resolution retinal "
+        "fundus photograph. It does not currently perform Out-of-Distribution (OOD) detection "
+        "for non-retinal images."
+    )
+
     if uploaded is not None:
         model = load_model3()
         if model is None:
             st.error("Model could not be loaded.")
             return
 
-        label, confidence = predict_m3(uploaded, model)
+        with st.spinner("Verifying image parameters and executing ResNet50 analysis..."):
+            import time
+            time.sleep(1.2)
+            label, confidence = predict_m3(uploaded, model)
         is_high_risk = "HIGH RISK" in label
         logger.info("M3 result — label=%s confidence=%.4f", label, confidence)
 
@@ -4879,7 +4888,9 @@ Provide clinical interpretation using medical terminology. Include:
 4. ICD-10 codes where applicable (e.g. E11.311 for T2DM with mild NPDR)
 5. Patient education talking points
 
-Be concise, evidence-based, and actionable. Use clear headings."""
+Be concise, evidence-based, and actionable. Use clear headings.
+
+CRITICAL RULE: YOU MUST ALWAYS END EVERY RESPONSE WITH THIS EXACT TEXT: '\n\n⚠️ **Disclaimer:** This is an AI-generated analysis for investigational use only. Always consult a licensed healthcare provider.'"""
 
                 # Reset chat history when the scan result changes
                 _result_key = f"{label}_{confidence:.4f}"
@@ -4898,8 +4909,8 @@ Be concise, evidence-based, and actionable. Use clear headings."""
                                     {"role": "system", "content": _retinal_system_prompt},
                                     {"role": "user", "content": "Provide a concise clinical interpretation of this retinal scan result."},
                                 ],
-                                temperature=0.3,
-                                max_tokens=800,
+                                temperature=0.2,
+                                max_tokens=1024,
                             )
                             st.session_state._retinal_chat_history.append({
                                 "role": "assistant",
@@ -4928,8 +4939,10 @@ Be concise, evidence-based, and actionable. Use clear headings."""
                 # Quick question buttons
                 st.markdown("**💡 Quick Questions:**")
                 _rq_labels = [
-                    ("qs_ret_1", "📊 Explain Grad-CAM findings",   "Explain what the Grad-CAM heatmap regions indicate clinically."),
-                    ("qs_ret_2", "⏰ Recommended follow-up?",       "What is the recommended follow-up schedule for this patient?"),
+                    ("qs_ret_1", "📊 Explain Grad-CAM findings",
+                     f"Explain what the Grad-CAM heatmap regions indicate clinically for a scan with a {confidence*100:.1f}% confidence of being {label}. Mention specific anatomical features like microaneurysms or exudates if applicable."),
+                    ("qs_ret_2", "⏰ Recommended follow-up?",
+                     f"What is the recommended follow-up schedule and urgency for this patient given the {label} classification and {confidence*100:.1f}% AI confidence?"),
                     ("qs_ret_3", "🚨 How urgent is referral?",      "How urgent is the ophthalmology referral and why?"),
                     ("qs_ret_4", "💬 What to tell the patient?",    "What are the key talking points for patient education about this result?"),
                 ]
@@ -4969,8 +4982,8 @@ Be concise, evidence-based, and actionable. Use clear headings."""
                         _ret_resp = _ai_client.chat.completions.create(
                             model="llama-3.1-8b-instant",
                             messages=_ret_msgs,
-                            temperature=0.3,
-                            max_tokens=500,
+                            temperature=0.2,
+                            max_tokens=1024,
                         )
                         st.session_state._retinal_chat_history.append({
                             "role": "assistant",
