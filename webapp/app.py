@@ -1049,10 +1049,15 @@ Keep the tone clinical, precise, and professional. Do not mention specific model
     try:
         response = client.chat.completions.create(
             model="llama-3.1-8b-instant",
-            max_tokens=400,
-            temperature=0.3,
+            max_tokens=1024,
+            temperature=0.2,
             messages=[
-                {"role": "system", "content": "You are a helpful medical AI assistant. Be concise and clinical."},
+                {"role": "system", "content": (
+                    "You are a helpful medical AI assistant. Be concise and clinical. "
+                    "CRITICAL RULE: YOU MUST ALWAYS END EVERY RESPONSE WITH THIS EXACT TEXT: "
+                    "'\n\n\u26a0\ufe0f **Disclaimer:** This is an AI-generated analysis for investigational "
+                    "use only. Always consult a licensed healthcare provider.'"
+                )},
                 {"role": "user", "content": prompt}
             ],
         )
@@ -4740,7 +4745,6 @@ def page_retinal() -> None:
             return
 
         with st.spinner("Verifying image parameters and executing ResNet50 analysis..."):
-            import time
             time.sleep(1.2)
             label, confidence = predict_m3(uploaded, model)
         is_high_risk = "HIGH RISK" in label
