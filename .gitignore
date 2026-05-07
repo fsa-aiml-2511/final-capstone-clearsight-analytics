@@ -7,9 +7,10 @@ data/processed/*.json
 data/processed/*.parquet
 *.zip
 *.tar.gz
-
+*.png
+*.jpg
 # Image datasets
-data/raw/images/
+data/raw/*
 data/processed/images/
 
 # Model weights and artifacts
@@ -55,5 +56,17 @@ env/
 
 # Logs
 *.log
+logs/
 wandb/
 runs/
+data/raw/healthcare_retinal_images/
+# ClearSight Specific
+*.png
+*.PNG
+saved_model/
+logs/
+.env
+
+# Streamlit secrets
+.streamlit/secrets.toml
+.streamlit/secrets.toml.backup
