@@ -480,7 +480,10 @@ section[data-testid="stSidebar"] { display: block !important; min-width: 260px !
                letter-spacing: 0.04em; }
 
 /* ── Buttons ─────────────────────────────────────────────────────── */
-div.stButton > button, div.stFormSubmitButton > button {
+div.stButton > button,
+div.stFormSubmitButton > button,
+[data-testid="stBaseButton-secondary"],
+[data-testid="stBaseButton-primary"] {
     background: linear-gradient(135deg, #22d3ee 0%, #185FA5 100%) !important;
     color: white !important;
     border: none !important;
@@ -494,7 +497,10 @@ div.stButton > button, div.stFormSubmitButton > button {
     font-family: 'Space Grotesk', sans-serif !important;
     letter-spacing: 0.02em !important;
 }
-div.stButton > button:hover, div.stFormSubmitButton > button:hover {
+div.stButton > button:hover,
+div.stFormSubmitButton > button:hover,
+[data-testid="stBaseButton-secondary"]:hover,
+[data-testid="stBaseButton-primary"]:hover {
     transform: translateY(-1px);
     box-shadow: 0 8px 30px rgba(34,211,238,0.5), inset 0 1px 0 rgba(255,255,255,0.3) !important;
 }
@@ -561,6 +567,53 @@ label, .stMarkdown p, .stMarkdown li { color: #cbd5e1 !important; }
 
 /* Headings */
 h1, h2, h3 { color: white !important; font-family: 'Space Grotesk', sans-serif; }
+
+/* ── Expander header legibility ──────────────────────────────────── */
+.streamlit-expanderHeader {
+    color: #e2e8f0 !important;
+    font-weight: 600 !important;
+}
+[data-testid="stExpander"] summary,
+[data-testid="stExpander"] summary p,
+[data-testid="stExpander"] summary span {
+    color: #e2e8f0 !important;
+    font-weight: 600 !important;
+}
+[data-testid="stExpander"] {
+    border: 1px solid rgba(34,211,238,0.2) !important;
+    border-radius: 10px !important;
+    background: rgba(15,23,42,0.5) !important;
+}
+
+/* ── Code block: dark theme + word-wrap ──────────────────────────── */
+div.stCodeBlock > div {
+    background-color: rgba(15, 23, 42, 0.6) !important;
+    border: 1px solid rgba(34, 211, 238, 0.2) !important;
+}
+div.stCodeBlock code {
+    white-space: pre-wrap !important;
+    word-wrap: break-word !important;
+    color: #e2e8f0 !important;
+}
+[data-testid="stCode"],
+[data-testid="stCode"] > div,
+[data-testid="stCode"] pre {
+    background-color: rgba(15, 23, 42, 0.85) !important;
+    border: 1px solid rgba(34, 211, 238, 0.2) !important;
+    border-radius: 8px !important;
+}
+[data-testid="stCode"] code,
+[data-testid="stCode"] pre,
+[data-testid="stCode"] span {
+    white-space: pre-wrap !important;
+    word-break: break-word !important;
+    overflow-wrap: break-word !important;
+    color: #e2e8f0 !important;
+    background: transparent !important;
+    font-family: 'JetBrains Mono', monospace !important;
+    font-size: 0.82rem !important;
+    line-height: 1.65 !important;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -2950,7 +3003,7 @@ def page_predict() -> None:
     with st.form("predict_form"):
 
         # ── Section 1: Demographics ─────────────────────────────────
-        with st.expander("👤 Demographics & Admission", expanded=True):
+        with st.expander("👤 Demographics & Admission", expanded=False):
             r1a, r1b, r1c, r1d = st.columns(4)
             age = r1a.selectbox("Age Bracket", [
                 '[0-10)','[10-20)','[20-30)','[30-40)','[40-50)',
@@ -3034,7 +3087,7 @@ def page_predict() -> None:
 
 
         # --- Section 5: Clinical Notes (Model 4 - NLP) ---
-        with st.expander("📝 Clinical Notes Analysis (NLP Intelligence)", expanded=True):
+        with st.expander("📝 Clinical Notes Analysis (NLP Intelligence)", expanded=False):
             st.markdown("""
             <p style='font-size: 0.9rem; color: #94a3b8;'>
                 Enter physician progress notes or patient feedback. Meta LSTM will analyze 
@@ -3247,7 +3300,7 @@ def page_predict() -> None:
             <div class="gauge-wrapper" style="background: conic-gradient({color} {pct}%, rgba(255,255,255,0.05) {pct}%);">
                 <div class="gauge-inner">
                     <span class="gauge-val">{pct}%</span>
-                    <span class="gauge-lbl">PROBABILITY</span>
+                    <span class="gauge-lbl" style="font-size:0.58rem;">30-DAY READMISSION</span>
                 </div>
             </div>
             <div class="risk-badge risk-{risk_tier}">{risk_tier} RISK</div>
@@ -3263,6 +3316,12 @@ def page_predict() -> None:
         <div class="section-head">
           <span class="num">🎯</span><h2>Inference Results</h2><div class="line"></div>
         </div>""", unsafe_allow_html=True)
+        st.markdown(
+            "<p style='color:#94a3b8; font-size:0.95rem; margin:-0.5rem 0 1.2rem;'>"
+            "🎯 <b>Clinical Metric:</b> Probability of unplanned hospital readmission "
+            "within <b>30 days</b> of discharge.</p>",
+            unsafe_allow_html=True,
+        )
         col_m1, col_m2 = st.columns(2, gap="large")
         with col_m1:
             if "m1_result" in st.session_state:
@@ -3436,6 +3495,85 @@ def page_predict() -> None:
             if st.button("🗑️ Clear Synthesis"):
                 del st.session_state["synthesis_result"]
                 st.rerun()
+
+    # ── Export Clinical Summary ───────────────────────────────────────────────
+    if "_syn_p1" in st.session_state:
+        with st.expander("📄 Export Clinical Summary (Copy to EHR)"):
+            _r1  = st.session_state.get("m1_result", {})
+            _r2  = st.session_state.get("m2_result", {})
+            _r4  = st.session_state.get("m4_result", {})
+            _r5  = st.session_state.get("m5_result", {})
+            _m1p = _r1.get("proba", 0.0)
+            _m2p = _r2.get("proba", 0.0)
+            _synthesis_text = st.session_state.get("synthesis_result", "Not generated — click 'Generate AI Clinical Consensus Report' above.")
+
+            clinical_report = f"""=========================================
+CLEARSIGHT ANALYTICS — PATIENT ENCOUNTER SUMMARY
+Generated: {__import__('datetime').datetime.now().strftime('%Y-%m-%d %H:%M')}
+=========================================
+
+[DEMOGRAPHICS & ADMISSION]
+  Age Bracket        : {st.session_state.get('sb_age', 'N/A')}
+  Gender             : {st.session_state.get('sb_gender', 'N/A')}
+  Race               : {st.session_state.get('sb_race', 'N/A')}
+  Admission Type     : {st.session_state.get('sb_admission_type', 'N/A')}
+  Discharge Disp.    : {st.session_state.get('sb_discharge_disp', 'N/A')}
+  Admission Source   : {st.session_state.get('sb_admission_src', 'N/A')}
+
+[CLINICAL METRICS]
+  Days in Hospital   : {st.session_state.get('ni_days_hospital', 'N/A')}
+  Lab Procedures     : {st.session_state.get('ni_lab_procs', 'N/A')}
+  Procedures         : {st.session_state.get('ni_procs', 'N/A')}
+  Total Medications  : {st.session_state.get('ni_meds', 'N/A')}
+  Number of Diagnoses: {st.session_state.get('ni_diag', 'N/A')}
+  Outpatient Visits  : {st.session_state.get('ni_outpatient', 'N/A')}
+  Emergency Visits   : {st.session_state.get('ni_emergency', 'N/A')}
+  Inpatient Visits   : {st.session_state.get('ni_inpatient', 'N/A')}
+  Prior Inpatient    : {st.session_state.get('ni_prior_inp', 'N/A')}
+
+[ICD-9 DIAGNOSES]
+  Primary (diag_1)   : {st.session_state.get('ti_diag1', 'N/A')}
+  Secondary (diag_2) : {st.session_state.get('ti_diag2', 'N/A')}
+  Tertiary (diag_3)  : {st.session_state.get('ti_diag3', 'N/A')}
+  Medical Specialty  : {st.session_state.get('ti_med_spec', 'N/A')}
+
+[MEDICATIONS & LABS]
+  Insulin            : {st.session_state.get('sb_insulin', 'N/A')}
+  Metformin          : {st.session_state.get('sb_metformin', 'N/A')}
+  Med Changed        : {st.session_state.get('sb_change', 'N/A')}
+  Diabetes Med       : {st.session_state.get('sb_diabetes_md', 'N/A')}
+  A1C Result         : {st.session_state.get('sb_a1c', 'N/A')}
+  Max Glucose Serum  : {st.session_state.get('sb_max_glu', 'N/A')}
+
+[AI RISK ASSESSMENT]
+  XGBoost M1 Prob.   : {_m1p:.1%}  (latency {_r1.get('latency', 0):.1f}ms)
+  DNN M2 Prob.       : {_m2p:.1%}  (latency {_r2.get('latency', 0):.1f}ms)
+  Avg Ensemble Risk  : {(_m1p + _m2p) / 2:.1%}
+  Model Agreement    : {"AGREE" if _r1.get('pred') == _r2.get('pred') else "DISAGREE"}
+
+[CAPACITY PLANNING (M5)]
+  Predicted LoS      : {_r5.get('label', 'N/A')}
+  LoS Confidence     : {_r5.get('conf', 0.0):.1%}
+
+[NLP CLINICAL SENTIMENT (M4)]
+  Context Medication : {st.session_state.get('ti_nlp_drug', 'N/A')}
+  Context Condition  : {st.session_state.get('ti_nlp_cond', 'N/A')}
+  Sentiment Label    : {_r4.get('label', 'N/A')}
+  NLP Confidence     : {_r4.get('conf', 0.0):.1%}
+  Interpretation     : {_r4.get('explanation', 'N/A')}
+
+[PHYSICIAN PROGRESS NOTE]
+{st.session_state.get('ta_clinical_notes', 'None provided')}
+
+[GENERATIVE AI SYNTHESIS]
+{_synthesis_text}
+
+=========================================
+⚠ FOR INVESTIGATIONAL USE ONLY · NOT A CLINICAL DIAGNOSIS
+ClearSight Analytics · Powered by XGBoost, DNN, Meta-LSTM, Llama 3.1
+========================================="""
+
+            st.code(clinical_report, language="markdown")
 
     # ── AI Clinical Copilot ───────────────────────────────────────────────────
     if "_syn_p1" in st.session_state:
