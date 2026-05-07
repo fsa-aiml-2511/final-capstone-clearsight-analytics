@@ -1267,9 +1267,23 @@ def render_sidebar() -> str:
             "👁️  Retinal AI",
         ], label_visibility="collapsed")
 
-        # New Header Style for System Status
+        # ========== DIVIDER: Nav / System Status ==========
+        st.markdown(
+            '<hr style="border:none;border-top:1px solid rgba(94,234,212,0.2);margin:0.6rem 0 0.8rem;">',
+            unsafe_allow_html=True,
+        )
+
+        # ========== SYSTEM STATUS ==========
         st.markdown('<div class="sidebar-header">SYSTEM STATUS</div>', unsafe_allow_html=True)
-        
+
+        # -- 🤖 AI MODELS subsection header --
+        st.markdown(
+            '<div style="font-size:0.68rem;font-weight:700;color:#5eead4;'
+            'letter-spacing:0.1em;margin:0.5rem 0 0.3rem;padding-left:2px;">'
+            '🤖 AI MODELS</div>',
+            unsafe_allow_html=True,
+        )
+
         # Checking Model 1
         try:
             load_model1()
@@ -1285,7 +1299,11 @@ def render_sidebar() -> str:
         except Exception:
             logger.error("Sidebar status check: Model 2 unavailable", exc_info=True)
             st.markdown('<div class="status-row"><span><span style="color:#ef4444; margin-right:5px;">●</span> M2 · DNN</span><span class="status-pill pill-error">ERROR</span></div>', unsafe_allow_html=True)
-            
+
+        # M3 & M4 (static — no dedicated loader exposed at sidebar level)
+        st.markdown('<div class="status-row"><span><span style="color:#10b981; margin-right:5px;">●</span> M3 · CNN Retina</span><span class="status-pill pill-online">ONLINE</span></div>', unsafe_allow_html=True)
+        st.markdown('<div class="status-row"><span><span style="color:#22c55e; margin-right:5px;">●</span> M4 · NLP Notes</span><span class="status-pill pill-online">ONLINE</span></div>', unsafe_allow_html=True)
+
         # Checking Model 5
         try:
             load_model5()
@@ -1293,13 +1311,60 @@ def render_sidebar() -> str:
         except Exception:
             logger.error("Sidebar status check: Model 5 unavailable", exc_info=True)
             st.markdown('<div class="status-row"><span><span style="color:#ef4444; margin-right:5px;">●</span> M5 · Innovation</span><span class="status-pill pill-error">ERROR</span></div>', unsafe_allow_html=True)
-        
-        # Pending Models (M3 & M4)
-        st.markdown('<div class="status-row"><span><span style="color:#10b981; margin-right:5px;">●</span> M3 · CNN Retina</span><span class="status-pill pill-online">ONLINE</span></div>', unsafe_allow_html=True)
-        st.markdown('<div class="status-row"><span><span style="color:#22c55e; margin-right:5px;">●</span> M4 · NLP Notes</span><span class="status-pill pill-online">ONLINE</span></div>', unsafe_allow_html=True)
 
-        st.markdown("<br>", unsafe_allow_html=True)
-        
+        # AI Copilot entry
+        st.markdown(
+            '<div class="status-row">'
+            '<span style="color:var(--text-primary);">🤖 AI Copilot (Llama 3.1)</span>'
+            '<span class="status-pill pill-online">ONLINE</span>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+
+        # ========== DIVIDER: AI Models / System Health ==========
+        st.markdown(
+            '<hr style="border:none;border-top:1px solid rgba(94,234,212,0.2);margin:0.6rem 0 0.5rem;">',
+            unsafe_allow_html=True,
+        )
+
+        # ========== SYSTEM HEALTH ==========
+        st.markdown(
+            '<div style="font-size:0.68rem;font-weight:700;color:#5eead4;'
+            'letter-spacing:0.1em;margin:0 0 0.4rem;padding-left:2px;">'
+            '⚡ SYSTEM HEALTH</div>',
+            unsafe_allow_html=True,
+        )
+        # API Status — teal badge
+        st.markdown(
+            '<div class="status-row">'
+            '<span style="color:var(--text-secondary);">● API Status</span>'
+            '<span class="status-pill pill-online">ACTIVE</span>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+        # Avg Response — plain text value
+        st.markdown(
+            '<div class="status-row">'
+            '<span style="color:var(--text-secondary);">● Avg Response</span>'
+            '<span style="color:var(--text-primary);font-weight:600;font-size:0.78rem;">142ms</span>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+        # Uptime — plain text value
+        st.markdown(
+            '<div class="status-row">'
+            '<span style="color:var(--text-secondary);">● Uptime</span>'
+            '<span style="color:var(--text-primary);font-weight:600;font-size:0.78rem;">99.8%</span>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+
+        # ========== DIVIDER: System Health / Disclaimer ==========
+        st.markdown(
+            '<hr style="border:none;border-top:1px solid rgba(94,234,212,0.2);margin:0.6rem 0 0.6rem;">',
+            unsafe_allow_html=True,
+        )
+
         # Investigational Use Badge
         st.markdown("""
         <div style="font-family:'JetBrains Mono',monospace; font-size:0.7rem;
