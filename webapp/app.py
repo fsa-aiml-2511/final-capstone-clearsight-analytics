@@ -3853,80 +3853,239 @@ def page_retinal() -> None:
                 <span style="color:#bbf7d0;font-size:1.1rem;font-weight:700;">{label}</span>
                 </div>""", unsafe_allow_html=True)
 
-        # ── ZONE 2: Image left | Details right ───────────────────
-        col_img, col_details = st.columns([6, 4])
+        # ── ZONES 2-4: Tabbed interface ───────────────────────────
+        _tab1, _tab2, _tab3 = st.tabs(["📊 Results", "🔬 Grad-CAM Analysis", "🤖 AI Clinical Interpretation"])
 
-        with col_img:
-            st.image(uploaded, caption="Fundus Photograph", use_container_width=True)
+        # ── TAB 1: Results ────────────────────────────────────────
+        with _tab1:
+            col_img, col_details = st.columns([6, 4])
 
-        with col_details:
-            # Confidence bar
-            st.markdown("**Model Confidence**")
-            bar_color = "#ef4444" if is_high_risk else "#22c55e"
-            st.markdown(
-                f"""<div style="background:#1e293b;border-radius:8px;padding:4px;margin-bottom:16px;">
-                  <div style="width:{confidence*100:.1f}%;background:{bar_color};border-radius:6px;
-                              padding:8px 12px;color:white;font-weight:700;font-size:1rem;">
-                    {confidence*100:.1f}%
-                  </div>
-                </div>""", unsafe_allow_html=True)
+            with col_img:
+                st.image(uploaded, caption="Fundus Photograph", use_container_width=True)
 
-            # Clinical recommendation
-            st.markdown("**Clinical Recommendation**")
-            if is_high_risk:
-                st.error("⚠️ Ophthalmologist referral recommended within 30 days.")
+            with col_details:
+                # Confidence bar
+                st.markdown("**Model Confidence**")
+                bar_color = "#ef4444" if is_high_risk else "#22c55e"
+                st.markdown(
+                    f"""<div style="background:#1e293b;border-radius:8px;padding:4px;margin-bottom:16px;">
+                      <div style="width:{confidence*100:.1f}%;background:{bar_color};border-radius:6px;
+                                  padding:8px 12px;color:white;font-weight:700;font-size:1rem;">
+                        {confidence*100:.1f}%
+                      </div>
+                    </div>""", unsafe_allow_html=True)
+
+                # Clinical recommendation
+                st.markdown("**Clinical Recommendation**")
+                if is_high_risk:
+                    st.error("⚠️ Ophthalmologist referral recommended within 30 days.")
+                else:
+                    st.info("✅ Annual screening recommended. No immediate action required.")
+
+            # ── DR Severity Reference Cards (full-width, below image/details) ──
+            st.markdown("---")
+            st.markdown("#### 📊 DR Severity Reference")
+
+            _severity_levels = [
+                {"level": "1", "color": "#22c55e", "emoji": "🟢", "name": "Mild NPDR",
+                 "findings": "Microaneurysms only",
+                 "action": "Monitor annually", "urgency": "Routine"},
+                {"level": "2", "color": "#eab308", "emoji": "🟡", "name": "Moderate NPDR",
+                 "findings": "More than microaneurysms, less than severe",
+                 "action": "Follow-up in 6 months", "urgency": "Standard"},
+                {"level": "3", "color": "#f97316", "emoji": "🟠", "name": "Severe NPDR",
+                 "findings": "Extensive hemorrhages, venous beading",
+                 "action": "Referral within 3 months", "urgency": "Elevated"},
+                {"level": "4", "color": "#ef4444", "emoji": "🔴", "name": "Proliferative DR",
+                 "findings": "Neovascularization, vitreous hemorrhage",
+                 "action": "Urgent referral (< 2 weeks)", "urgency": "Critical"},
+            ]
+
+            _sev_cols = st.columns(4)
+            for _i, _lvl in enumerate(_severity_levels):
+                with _sev_cols[_i]:
+                    st.markdown(f"""
+                    <div style="border:1px solid {_lvl['color']};border-radius:12px;padding:1rem;
+                                background:rgba(13,27,42,0.95);height:100%;">
+                        <div style="font-size:1.5rem;margin-bottom:0.4rem;">{_lvl['emoji']}</div>
+                        <div style="font-size:0.9rem;font-weight:700;color:{_lvl['color']};
+                                    margin-bottom:0.2rem;">
+                            Level {_lvl['level']} · {_lvl['name']}
+                        </div>
+                        <div style="font-size:0.7rem;color:#64748b;margin-bottom:0.5rem;">
+                            Urgency: {_lvl['urgency']}
+                        </div>
+                        <div style="font-size:0.75rem;color:#94a3b8;margin-bottom:0.4rem;">
+                            <strong style="color:#cbd5e1;">Findings:</strong> {_lvl['findings']}
+                        </div>
+                        <div style="font-size:0.75rem;color:{_lvl['color']};font-weight:600;">
+                            {_lvl['action']}
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+        # ── TAB 2: Grad-CAM ───────────────────────────────────────
+        with _tab2:
+            st.subheader("🔬 Grad-CAM — Model Attention Map")
+            st.caption("Highlights the retinal regions that influenced the prediction.")
+
+            if st.button("Generate Grad-CAM Heatmap", key="gradcam_btn"):
+                with st.spinner("Computing attention map..."):
+                    try:
+                        pil_img = Image.open(uploaded).convert("RGB")
+                        img_arr = np.array(pil_img.resize((224, 224))).astype(np.float32)
+                        img_arr = np.expand_dims(img_arr, axis=0)
+                        from keras.applications.resnet50 import preprocess_input as resnet_preprocess
+                        img_preprocessed = resnet_preprocess(img_arr)
+                        heatmap = make_gradcam(img_preprocessed, model)
+                        overlay = overlay_gradcam(pil_img, heatmap)
+
+                        col_orig, col_cam = st.columns(2)
+                        with col_orig:
+                            st.image(uploaded, caption="Original", use_container_width=True)
+                        with col_cam:
+                            st.image(overlay, caption="Grad-CAM Overlay", use_container_width=True)
+
+                        st.caption("🔴 Red/yellow = high attention regions  |  🔵 Blue = low attention")
+                    except Exception as e:
+                        st.error(f"Grad-CAM failed: {e}")
+
+        # ── TAB 3: AI Clinical Interpretation ────────────────────
+        with _tab3:
+            st.markdown("### 🤖 AI Clinical Interpretation")
+
+            _groq_key = st.secrets.get("GROQ_API_KEY", "")
+            if not _groq_key:
+                st.warning("⚠️ Groq API key not configured. AI Clinical Interpretation unavailable.")
             else:
-                st.info("✅ Annual screening recommended. No immediate action required.")
+                from openai import OpenAI as _RetinalOAI
+                import html as _html_retinal
+                _ai_client = _RetinalOAI(
+                    api_key=_groq_key,
+                    base_url="https://api.groq.com/openai/v1",
+                )
 
-            # Severity table — only HIGH RISK
-            if is_high_risk:
-                st.markdown("**DR Severity Reference**")
-                st.markdown("""
-            <div style="background:#1e293b;border-radius:10px;padding:16px;
-                        border:1px solid #334155;margin-top:8px;">
-            <table style="width:100%;border-collapse:collapse;">
-              <thead>
-                <tr>
-                  <th style="color:#94a3b8;font-size:0.75rem;padding:4px 8px;text-align:left;">GRADE</th>
-                  <th style="color:#94a3b8;font-size:0.75rem;padding:4px 8px;text-align:left;">NAME</th>
-                  <th style="color:#94a3b8;font-size:0.75rem;padding:4px 8px;text-align:left;">ACTION</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr><td style="color:#e2e8f0;padding:6px 8px;">1</td><td style="color:#e2e8f0;padding:6px 8px;">Mild NPDR</td><td style="color:#94a3b8;padding:6px 8px;">Monitor annually</td></tr>
-                <tr><td style="color:#e2e8f0;padding:6px 8px;">2</td><td style="color:#e2e8f0;padding:6px 8px;">Moderate NPDR</td><td style="color:#94a3b8;padding:6px 8px;">Follow-up in 6 months</td></tr>
-                <tr><td style="color:#e2e8f0;padding:6px 8px;">3</td><td style="color:#e2e8f0;padding:6px 8px;">Severe NPDR</td><td style="color:#f87171;padding:6px 8px;">Referral within 1 month</td></tr>
-                <tr><td style="color:#e2e8f0;padding:6px 8px;">4</td><td style="color:#e2e8f0;padding:6px 8px;">Proliferative DR</td><td style="color:#f87171;padding:6px 8px;">Urgent referral</td></tr>
-              </tbody>
-            </table>
-            </div>
-            """, unsafe_allow_html=True)
+                _retinal_system_prompt = f"""You are a Senior Ophthalmology Clinical AI Assistant specializing in diabetic retinopathy screening.
 
-        # ── ZONE 3: Grad-CAM side by side with original ───────────
-        st.markdown("---")
-        st.subheader("🔬 Grad-CAM — Model Attention Map")
-        st.caption("Highlights the retinal regions that influenced the prediction.")
+RETINAL SCAN FINDINGS:
+- Classification: {label}
+- Model Confidence: {confidence*100:.1f}%
+- Risk Level: {"HIGH RISK — Diabetic Retinopathy Detected" if is_high_risk else "Normal — No Diabetic Retinopathy Detected"}
 
-        if st.button("Generate Grad-CAM Heatmap"):
-            with st.spinner("Computing attention map..."):
-                try:
-                    pil_img = Image.open(uploaded).convert("RGB")
-                    img_arr = np.array(pil_img.resize((224, 224))).astype(np.float32)
-                    img_arr = np.expand_dims(img_arr, axis=0)
-                    from keras.applications.resnet50 import preprocess_input as resnet_preprocess
-                    img_preprocessed = resnet_preprocess(img_arr)
-                    heatmap = make_gradcam(img_preprocessed, model)
-                    overlay = overlay_gradcam(pil_img, heatmap)
+Provide clinical interpretation using medical terminology. Include:
+1. Clinical summary of retinal findings
+2. DR severity classification (if applicable)
+3. Recommended follow-up actions with timeframes
+4. ICD-10 codes where applicable (e.g. E11.311 for T2DM with mild NPDR)
+5. Patient education talking points
 
-                    col_orig, col_cam = st.columns(2)
-                    with col_orig:
-                        st.image(uploaded, caption="Original", use_container_width=True)
-                    with col_cam:
-                        st.image(overlay, caption="Grad-CAM Overlay", use_container_width=True)
+Be concise, evidence-based, and actionable. Use clear headings."""
 
-                    st.caption("🔴 Red/yellow = high attention regions  |  🔵 Blue = low attention")
-                except Exception as e:
-                    st.error(f"Grad-CAM failed: {e}")
+                # Reset chat history when the scan result changes
+                _result_key = f"{label}_{confidence:.4f}"
+                if (st.session_state.get("_retinal_result_key") != _result_key
+                        or "_retinal_chat_history" not in st.session_state):
+                    st.session_state._retinal_result_key = _result_key
+                    st.session_state._retinal_chat_history = []
+
+                # Auto-generate initial narrative on first load
+                if not st.session_state._retinal_chat_history:
+                    with st.spinner("Generating clinical interpretation..."):
+                        try:
+                            _init_resp = _ai_client.chat.completions.create(
+                                model="llama-3.1-8b-instant",
+                                messages=[
+                                    {"role": "system", "content": _retinal_system_prompt},
+                                    {"role": "user", "content": "Provide a concise clinical interpretation of this retinal scan result."},
+                                ],
+                                temperature=0.3,
+                                max_tokens=800,
+                            )
+                            st.session_state._retinal_chat_history.append({
+                                "role": "assistant",
+                                "content": _init_resp.choices[0].message.content,
+                            })
+                        except Exception as _init_err:
+                            st.error(f"AI interpretation failed: {_init_err}")
+
+                # Display chat history
+                _ret_container = st.container(height=420, border=True)
+                with _ret_container:
+                    for _msg in st.session_state._retinal_chat_history:
+                        if _msg["role"] == "assistant":
+                            st.markdown(f"**🤖 AI Assistant:**\n\n{_msg['content']}")
+                            st.markdown("---")
+                        else:
+                            st.markdown(
+                                f'<div style="background:rgba(34,211,238,0.08);'
+                                f'border:1px solid rgba(34,211,238,0.2);border-radius:8px;'
+                                f'padding:0.6rem 1rem;margin:0.5rem 0;font-size:0.9rem;">'
+                                f'<strong>👨‍⚕️ You:</strong> '
+                                f'{_html_retinal.escape(_msg["content"])}</div>',
+                                unsafe_allow_html=True,
+                            )
+
+                # Quick question buttons
+                st.markdown("**💡 Quick Questions:**")
+                _rq_labels = [
+                    ("qs_ret_1", "📊 Explain Grad-CAM findings",   "Explain what the Grad-CAM heatmap regions indicate clinically."),
+                    ("qs_ret_2", "⏰ Recommended follow-up?",       "What is the recommended follow-up schedule for this patient?"),
+                    ("qs_ret_3", "🚨 How urgent is referral?",      "How urgent is the ophthalmology referral and why?"),
+                    ("qs_ret_4", "💬 What to tell the patient?",    "What are the key talking points for patient education about this result?"),
+                ]
+                _rq_cols = st.columns(2)
+                _ret_starter = None
+                for _qi, (_rk, _rl, _rp) in enumerate(_rq_labels):
+                    with _rq_cols[_qi % 2]:
+                        if st.button(_rl, key=_rk):
+                            _ret_starter = _rp
+
+                # Chat form
+                with st.form(key="retinal_copilot_form", clear_on_submit=True):
+                    _rfc, _rsc = st.columns([11, 1])
+                    with _rfc:
+                        _ret_typed = st.text_input(
+                            "Ask a follow-up question:",
+                            label_visibility="collapsed",
+                            placeholder="Type a clinical question…",
+                        )
+                    with _rsc:
+                        _ret_submitted = st.form_submit_button("➤")
+
+                _ret_active = _ret_starter or (
+                    _ret_typed.strip() if _ret_submitted and _ret_typed.strip() else None
+                )
+
+                if _ret_active:
+                    st.session_state._retinal_chat_history.append(
+                        {"role": "user", "content": _ret_active}
+                    )
+                    try:
+                        _ret_msgs = [{"role": "system", "content": _retinal_system_prompt}]
+                        _ret_msgs += [
+                            {"role": m["role"], "content": m["content"]}
+                            for m in st.session_state._retinal_chat_history
+                        ]
+                        _ret_resp = _ai_client.chat.completions.create(
+                            model="llama-3.1-8b-instant",
+                            messages=_ret_msgs,
+                            temperature=0.3,
+                            max_tokens=500,
+                        )
+                        st.session_state._retinal_chat_history.append({
+                            "role": "assistant",
+                            "content": _ret_resp.choices[0].message.content,
+                        })
+                    except Exception as _ret_err:
+                        st.session_state._retinal_chat_history.append({
+                            "role": "assistant",
+                            "content": f"⚠️ Error generating response: {_ret_err}",
+                        })
+                    st.rerun()
+
+                if st.button("🗑️ Clear Conversation", key="clear_retinal_chat"):
+                    st.session_state._retinal_chat_history = []
+                    st.rerun()
 # =============================================================================
 # MAIN ROUTER
 # =============================================================================
