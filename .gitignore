@@ -69,3 +69,4 @@ logs/
 
 # Streamlit secrets
 .streamlit/secrets.toml
+.streamlit/secrets.toml.backup
