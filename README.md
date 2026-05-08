@@ -153,7 +153,7 @@ Navigate to `http://localhost:8501` in your browser.
 |------|------|--------|
 | **ML / DNN Lead** | Francisco Molina | [@Frankmo89](https://github.com/Frankmo89) |
 | **NLP Lead** | Wesley Houk | [@wesleyhouk](https://github.com/wesleyhouk) |
-| **CNN / CV Lead** | Doug Bacon | [@Cooley5632] |
+| **CNN / CV Lead** | Doug Bacon | [@Cooley5632](https://github.com/@Cooley5632)|
 | **Data Engineering** | Francisco Molina | [@Frankmo89](https://github.com/Frankmo89) |
 
 ---
