@@ -4567,8 +4567,8 @@ def page_insights() -> None:
         with col_nlp2:
             st.markdown("#### Sentiment Distribution (Training Data)")
             _nlp_fig = px.pie(
-                names=["Stable", "Elevated Risk", "Critical Risk"],
-                values=[65, 25, 10],
+                names=["Highly Effective", "Somewhat Effective", "Ineffective"],
+                values=[48.7, 33.5, 17.8],
                 hole=0.5,
                 color_discrete_sequence=["#22d3ee", "#fbbf24", "#f43f5e"],
             )
