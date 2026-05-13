@@ -1,6 +1,6 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """
-Model 4: NLP Classification — Prediction Script
+Model 4: NLP Classification â€” Prediction Script
 =================================================
 Loads your trained model and generates predictions on patient medication feedback.
 
@@ -16,17 +16,20 @@ import torch.nn as nn
 from pathlib import Path
 from torch.utils.data import Dataset, DataLoader
 from transformers import AutoTokenizer, AutoModel
+from huggingface_hub import hf_hub_download
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from pipelines.data_pipeline_wes import load_raw_data, clean_data, engineer_features
 
+HF_REPO = "whoukcode/finalcapstone"
+
 # =============================================================================
-# ── Model Selection ───────────────────────────────────────────────────────────
+# â”€â”€ Model Selection â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # Change ACTIVE_MODEL to switch which trained model runs predictions.
-#   "biobert" → train_biobert.py  (BioBERT LoRA + drug/condition metadata) — BEST: F1 0.9018
-#   "lstm"    → train_lstm.py     (biLSTM + attention + drug/condition metadata) — F1 0.8972
+#   "biobert" â†’ train_biobert.py  (BioBERT LoRA + drug/condition metadata) â€” BEST: F1 0.9018
+#   "lstm"    â†’ train_lstm.py     (biLSTM + attention + drug/condition metadata) â€” F1 0.8972
 ACTIVE_MODEL = "biobert"
 
 MODEL_CONFIGS = {
@@ -62,6 +65,20 @@ TEST_DATA_DIR = PROJECT_ROOT / "test_data"
 OUTPUT_FILE  = TEST_DATA_DIR / "model4_results.csv"
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+def get_model_file(filename):
+    """Return local path, downloading from HuggingFace if not found locally."""
+    local_path = MODEL_DIR / filename
+    if not local_path.exists():
+        print(f"{filename} not found locally â€” downloading from HuggingFace...")
+        try:
+            hf_hub_download(repo_id=HF_REPO, filename=filename, local_dir=str(MODEL_DIR))
+        except Exception as e:
+            raise RuntimeError(
+                f"Could not find '{filename}' locally or download it from "
+                f"HuggingFace ({HF_REPO}).\nError: {e}"
+            )
+    return local_path
 
 
 # =============================================================================
@@ -99,7 +116,7 @@ class BioBERTMetadataClassifier(nn.Module):
 
 
 class _BioBERTDataset(Dataset):
-    """Lazy-tokenizing dataset — tokenizes one text at a time to avoid a large upfront memory spike."""
+    """Lazy-tokenizing dataset â€” tokenizes one text at a time to avoid a large upfront memory spike."""
     def __init__(self, texts, X_drug, X_cond, tokenizer, max_len):
         self.texts     = texts
         self.drug      = torch.tensor(X_drug, dtype=torch.long)
@@ -199,9 +216,9 @@ def load_model():
     cfg = MODEL_CONFIGS[ACTIVE_MODEL]
 
     if ACTIVE_MODEL == "biobert":
-        drug_le  = joblib.load(MODEL_DIR / cfg["drug_enc_file"])
-        cond_le  = joblib.load(MODEL_DIR / cfg["cond_enc_file"])
-        label_le = joblib.load(MODEL_DIR / cfg["label_enc_file"])
+        drug_le  = joblib.load(get_model_file(cfg["drug_enc_file"]))
+        cond_le  = joblib.load(get_model_file(cfg["cond_enc_file"]))
+        label_le = joblib.load(get_model_file(cfg["label_enc_file"]))
 
         tokenizer = AutoTokenizer.from_pretrained(cfg["biobert_name"])
         model = BioBERTMetadataClassifier(
@@ -212,7 +229,7 @@ def load_model():
             hidden_dim     = cfg["hidden_dim"],
             dropout        = cfg["dropout"],
         ).to(DEVICE)
-        model.load_state_dict(torch.load(MODEL_DIR / cfg["model_file"], map_location=DEVICE))
+        model.load_state_dict(torch.load(get_model_file(cfg["model_file"]), map_location=DEVICE))
         model.eval()
         print(f"Loaded biobert from {cfg['model_file']}")
         return {"model": model, "tokenizer": tokenizer, "drug_le": drug_le,
@@ -220,10 +237,10 @@ def load_model():
                 "max_len": cfg["max_len"], "approach": "biobert"}
 
     elif ACTIVE_MODEL == "lstm":
-        vocab     = joblib.load(MODEL_DIR / cfg["vocab_file"])
-        drug_le   = joblib.load(MODEL_DIR / cfg["drug_enc_file"])
-        cond_le   = joblib.load(MODEL_DIR / cfg["cond_enc_file"])
-        label_le  = joblib.load(MODEL_DIR / cfg["label_enc_file"])
+        vocab     = joblib.load(get_model_file(cfg["vocab_file"]))
+        drug_le   = joblib.load(get_model_file(cfg["drug_enc_file"]))
+        cond_le   = joblib.load(get_model_file(cfg["cond_enc_file"]))
+        label_le  = joblib.load(get_model_file(cfg["label_enc_file"]))
 
         model = MetadataLSTMClassifier(
             vocab_size      = len(vocab.word2idx),
@@ -235,7 +252,7 @@ def load_model():
             num_layers      = cfg["num_layers"],
             dropout         = cfg["dropout"],
         ).to(DEVICE)
-        model.load_state_dict(torch.load(MODEL_DIR / cfg["model_file"], map_location=DEVICE))
+        model.load_state_dict(torch.load(get_model_file(cfg["model_file"]), map_location=DEVICE))
         model.eval()
         print(f"Loaded lstm from {cfg['model_file']}")
         return {"model": model, "vocab": vocab, "drug_le": drug_le,
@@ -263,7 +280,7 @@ def predict(bundle, df):
     model    = bundle["model"]
 
     if approach == "biobert":
-        # BioBERT is cased and handles its own tokenization — use raw text
+        # BioBERT is cased and handles its own tokenization â€” use raw text
         tokenizer = bundle["tokenizer"]
         drug_le   = bundle["drug_le"]
         cond_le   = bundle["cond_le"]

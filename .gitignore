@@ -22,8 +22,6 @@ models/*/saved_model/*.keras
 models/*/saved_model/*.safetensors
 models/*/saved_model/*.bin
 models/*/saved_model/*.onnx
-models/*/saved_model/NOT_USED
-models/*/saved_model/USED
 
 # Test data (provided by instructor)
 test_data/*.csv
@@ -66,7 +64,7 @@ data/raw/healthcare_retinal_images/
 # ClearSight Specific
 *.png
 *.PNG
-#saved_model/
+saved_model/
 logs/
 .env
 .claude/scheduled_tasks.lock
