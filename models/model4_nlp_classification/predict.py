@@ -1,6 +1,6 @@
 ﻿#!/usr/bin/env python3
 """
-Model 4: NLP Classification â€” Prediction Script
+Model 4: NLP Classification - Prediction Script
 =================================================
 Loads your trained model and generates predictions on patient medication feedback.
 
@@ -26,11 +26,11 @@ from pipelines.data_pipeline_wes import load_raw_data, clean_data, engineer_feat
 HF_REPO = "whoukcode/finalcapstone"
 
 # =============================================================================
-# â”€â”€ Model Selection â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# Model Selection
 # Change ACTIVE_MODEL to switch which trained model runs predictions.
-#   "biobert" â†’ train_biobert.py  (BioBERT LoRA + drug/condition metadata) â€” BEST: F1 0.9018
-#   "lstm"    â†’ train_lstm.py     (biLSTM + attention + drug/condition metadata) â€” F1 0.8972
-ACTIVE_MODEL = "biobert"
+#   “biobert” -> train_biobert.py  (BioBERT LoRA + drug/condition metadata) - BEST: F1 0.9018
+#   “lstm”    -> train_lstm.py     (biLSTM + attention + drug/condition metadata) - F1 0.8972
+ACTIVE_MODEL = "lstm"
 
 MODEL_CONFIGS = {
     "biobert": {
@@ -70,7 +70,7 @@ def get_model_file(filename):
     """Return local path, downloading from HuggingFace if not found locally."""
     local_path = MODEL_DIR / filename
     if not local_path.exists():
-        print(f"{filename} not found locally â€” downloading from HuggingFace...")
+        print(f”{filename} not found locally - downloading from HuggingFace...”)
         try:
             hf_hub_download(repo_id=HF_REPO, filename=filename, local_dir=str(MODEL_DIR))
         except Exception as e:
@@ -116,7 +116,7 @@ class BioBERTMetadataClassifier(nn.Module):
 
 
 class _BioBERTDataset(Dataset):
-    """Lazy-tokenizing dataset â€” tokenizes one text at a time to avoid a large upfront memory spike."""
+    “””Lazy-tokenizing dataset - tokenizes one text at a time to avoid a large upfront memory spike.”””
     def __init__(self, texts, X_drug, X_cond, tokenizer, max_len):
         self.texts     = texts
         self.drug      = torch.tensor(X_drug, dtype=torch.long)
@@ -280,7 +280,7 @@ def predict(bundle, df):
     model    = bundle["model"]
 
     if approach == "biobert":
-        # BioBERT is cased and handles its own tokenization â€” use raw text
+        # BioBERT is cased and handles its own tokenization - use raw text
         tokenizer = bundle["tokenizer"]
         drug_le   = bundle["drug_le"]
         cond_le   = bundle["cond_le"]
