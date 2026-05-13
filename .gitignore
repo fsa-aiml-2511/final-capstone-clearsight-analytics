@@ -22,6 +22,7 @@ models/*/saved_model/*.keras
 models/*/saved_model/*.safetensors
 models/*/saved_model/*.bin
 models/*/saved_model/*.onnx
+models/*/*.keras
 
 # Test data (provided by instructor)
 test_data/*.csv
