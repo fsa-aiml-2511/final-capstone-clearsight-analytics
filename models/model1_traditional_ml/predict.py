@@ -23,34 +23,53 @@ SAVED_MODEL_DIR = Path(__file__).resolve().parent / "saved_model"
 TEST_DATA_DIR = PROJECT_ROOT / "test_data"
 OUTPUT_FILE = TEST_DATA_DIR / "model1_results.csv"
 
+HF_REPO      = "whoukcode/finalcapstone"
+HF_SUBFOLDER = "model1_traditional_ml/saved_model"
+
+
+def ensure_model_files():
+    """Download all saved_model files from HuggingFace if any are missing."""
+    if not any(SAVED_MODEL_DIR.glob("*.joblib")):
+        print("Model files not found locally — downloading from HuggingFace...")
+        try:
+            from huggingface_hub import snapshot_download
+            snapshot_download(
+                repo_id=HF_REPO,
+                allow_patterns=[f"{HF_SUBFOLDER}/*"],
+                local_dir=str(PROJECT_ROOT / "models"),
+            )
+            print("Download complete.")
+        except Exception as e:
+            raise RuntimeError(
+                f"Could not download model files from HuggingFace ({HF_REPO}). Error: {e}"
+            )
+
 
 def load_model():
     """Load trained model, preprocessing state, feature names, and optimal threshold."""
+    ensure_model_files()
     model = joblib.load(SAVED_MODEL_DIR / "model.joblib")
     preprocessing_state = joblib.load(SAVED_MODEL_DIR / "preprocessing_state.joblib")
     feature_names = joblib.load(SAVED_MODEL_DIR / "feature_names.joblib")
 
-    # Load cost-optimized threshold (falls back to 0.5 if not found)
     threshold_path = SAVED_MODEL_DIR / "optimal_threshold.joblib"
-    if threshold_path.exists():
-        optimal_threshold = joblib.load(threshold_path)
-    else:
-        optimal_threshold = 0.5
+    optimal_threshold = joblib.load(threshold_path) if threshold_path.exists() else 0.5
 
     return model, preprocessing_state, feature_names, optimal_threshold
 
 
 def find_test_file():
-    """Find the test data CSV in test_data/ folder."""
-    # Look for any CSV file in test_data/
+    """Find the test data CSV in test_data/, falling back to data/raw/."""
     csv_files = list(TEST_DATA_DIR.glob("*.csv"))
-    # Filter out results files (our own output)
     csv_files = [f for f in csv_files if "results" not in f.name.lower()]
 
     if not csv_files:
+        fallback = PROJECT_ROOT / "data" / "raw" / "patient_encounters_2023.csv"
+        if fallback.exists():
+            print(f"No file in test_data/ — using fallback: {fallback}")
+            return fallback
         raise FileNotFoundError(
-            f"No test data CSV found in {TEST_DATA_DIR}/\n"
-            f"Abishek will place the test file here before running bulk_test.py"
+            f"No test data CSV found in {TEST_DATA_DIR}/ or {fallback.parent}/"
         )
 
     # Use the first non-results CSV found
