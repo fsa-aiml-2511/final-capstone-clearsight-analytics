@@ -12,6 +12,7 @@ Usage from any model:
 import pandas as pd
 from pathlib import Path
 from sklearn.model_selection import train_test_split
+from pipelines.preprocessing_hints import create_medication_categories, preprocess_review_text
 
 # Project paths
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -66,12 +67,15 @@ def engineer_features(df):
 
     - review_word_count: number of words in the review
     - review_char_count: number of characters in the review
+    - review_text_clean: LSTM-ready text (lowercase, letters only, no punctuation/numbers)
+                         benefitsReview is kept raw for BioBERT
 
     Returns:
         DataFrame with added feature columns
     """
     df["review_word_count"] = df["benefitsReview"].str.split().str.len()
     df["review_char_count"] = df["benefitsReview"].str.len()
+    df["review_text_clean"] = df["benefitsReview"].apply(preprocess_review_text)
     return df
 
 

@@ -495,11 +495,15 @@ def preprocess_review_text(text: str) -> str:
     - 3-class: Effective (7-10), Neutral (4-6), Ineffective (1-3)
     - Binary: Effective (rating >= 7) vs Ineffective (rating < 7)
     """
+    import re
     if pd.isna(text):
         return ""
 
-    text = str(text).lower().strip()
-    # Add your preprocessing steps here
+    text = str(text).lower()
+    text = text.replace("\n", " ")
+    text = re.sub(r"&#\d+;|&[a-z]+;", " ", text)   # strip HTML entities
+    text = re.sub(r"[^a-z\s]", " ", text)            # keep only letters and spaces
+    text = re.sub(r"\s+", " ", text).strip()
     return text
 
 
