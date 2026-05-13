@@ -46,6 +46,7 @@ from sklearn.metrics import classification_report, f1_score, confusion_matrix
 import seaborn as sns
 import matplotlib.pyplot as plt
 from tqdm import tqdm
+from huggingface_hub import hf_hub_download
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -61,7 +62,22 @@ BIOBERT_MODEL   = "dmis-lab/biobert-base-cased-v1.2"
 MAX_LEN         = 256
 PHASE2_CKPT     = SAVED_MODEL_DIR / "model_biobert_phase2.pt"
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+HF_REPO = "whoukcode/finalcapstone"
 print(f"Using device: {DEVICE}")
+
+def get_model_file(filename):
+    """Return local path, downloading from HuggingFace if not found locally."""
+    local_path = SAVED_MODEL_DIR / filename
+    if not local_path.exists():
+        print(f"{filename} not found locally — downloading from HuggingFace...")
+        try:
+            hf_hub_download(repo_id=HF_REPO, filename=filename, local_dir=str(SAVED_MODEL_DIR))
+        except Exception as e:
+            raise RuntimeError(
+                f"Could not find '{filename}' locally or download it from "
+                f"HuggingFace ({HF_REPO}).\nError: {e}"
+            )
+    return local_path
 
 # ── Phase 2 knob ─────────────────────────────────────────────────────────────
 PHASE2_FRAC = 1.00   # fraction of 192k used for Phase 2 (skipped if ckpt exists)
@@ -452,6 +468,7 @@ def main():
     # =========================================================================
     # Phase 2 — reuse checkpoint if available
     # =========================================================================
+    get_model_file("model_biobert_phase2.pt")
     if PHASE2_CKPT.exists():
         print(f"\n=== Phase 2: checkpoint found at {PHASE2_CKPT} — skipping ===")
     else:

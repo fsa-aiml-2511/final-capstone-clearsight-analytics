@@ -37,6 +37,7 @@ from sklearn.metrics import classification_report, f1_score, confusion_matrix
 import seaborn as sns
 import matplotlib.pyplot as plt
 from tqdm import tqdm
+from huggingface_hub import hf_hub_download
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -51,7 +52,22 @@ PRETRAINED_CKPT  = SAVED_MODEL_DIR / "model_pretrained.pt"
 PRETRAINED_VOCAB = SAVED_MODEL_DIR / "vocab_pretrained.joblib"
 TARGET_COL       = "effectiveness_3class"
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+HF_REPO = "whoukcode/finalcapstone"
 print(f"Using device: {DEVICE}")
+
+def get_model_file(filename):
+    """Return local path, downloading from HuggingFace if not found locally."""
+    local_path = SAVED_MODEL_DIR / filename
+    if not local_path.exists():
+        print(f"{filename} not found locally — downloading from HuggingFace...")
+        try:
+            hf_hub_download(repo_id=HF_REPO, filename=filename, local_dir=str(SAVED_MODEL_DIR))
+        except Exception as e:
+            raise RuntimeError(
+                f"Could not find '{filename}' locally or download it from "
+                f"HuggingFace ({HF_REPO}).\nError: {e}"
+            )
+    return local_path
 
 
 # =============================================================================
@@ -475,6 +491,7 @@ def main():
 
     # 2. Vocab — use pre-cleaned text from processed CSV
     texts = df["review_text_clean"].fillna("").tolist()
+    get_model_file("vocab_pretrained.joblib")
     if PRETRAINED_VOCAB.exists():
         print(f"\nLoading pre-built vocabulary from {PRETRAINED_VOCAB}")
         vocab = joblib.load(PRETRAINED_VOCAB)
@@ -507,6 +524,7 @@ def main():
     num_conditions = len(cond_le.classes_)
 
     # 6. Phase 1 — pre-train plain LSTM (or reuse existing checkpoint)
+    get_model_file("model_pretrained.pt")
     if not PRETRAINED_CKPT.exists():
         print("\nNo pre-trained checkpoint found — running Phase 1.")
         pretrain_text_lstm(X_text_train, y_train, vocab_size)
