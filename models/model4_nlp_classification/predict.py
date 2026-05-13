@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """
 Model 4: NLP Classification - Prediction Script
 =================================================
@@ -28,9 +28,9 @@ HF_REPO = "whoukcode/finalcapstone"
 # =============================================================================
 # Model Selection
 # Change ACTIVE_MODEL to switch which trained model runs predictions.
-#   “biobert” -> train_biobert.py  (BioBERT LoRA + drug/condition metadata) - BEST: F1 0.9018
-#   “lstm”    -> train_lstm.py     (biLSTM + attention + drug/condition metadata) - F1 0.8972
-ACTIVE_MODEL = "lstm"
+#   "biobert" -> train_biobert.py  (BioBERT LoRA + drug/condition metadata) - BEST: F1 0.9018
+#   "lstm"    -> train_lstm.py     (biLSTM + attention + drug/condition metadata) - F1 0.8972
+ACTIVE_MODEL = "biobert"
 
 MODEL_CONFIGS = {
     "biobert": {
@@ -67,17 +67,13 @@ OUTPUT_FILE  = TEST_DATA_DIR / "model4_results.csv"
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def get_model_file(filename):
-    """Return local path, downloading from HuggingFace if not found locally."""
     local_path = MODEL_DIR / filename
     if not local_path.exists():
-        print(f”{filename} not found locally - downloading from HuggingFace...”)
+        print(filename + " not found locally - downloading from HuggingFace...")
         try:
             hf_hub_download(repo_id=HF_REPO, filename=filename, local_dir=str(MODEL_DIR))
         except Exception as e:
-            raise RuntimeError(
-                f"Could not find '{filename}' locally or download it from "
-                f"HuggingFace ({HF_REPO}).\nError: {e}"
-            )
+            raise RuntimeError("Could not find " + filename + " locally or download it from HuggingFace (" + HF_REPO + "). Error: " + str(e))
     return local_path
 
 
@@ -116,7 +112,7 @@ class BioBERTMetadataClassifier(nn.Module):
 
 
 class _BioBERTDataset(Dataset):
-    “””Lazy-tokenizing dataset - tokenizes one text at a time to avoid a large upfront memory spike.”””
+    """Lazy-tokenizing dataset - tokenizes one text at a time to avoid a large upfront memory spike."""
     def __init__(self, texts, X_drug, X_cond, tokenizer, max_len):
         self.texts     = texts
         self.drug      = torch.tensor(X_drug, dtype=torch.long)
