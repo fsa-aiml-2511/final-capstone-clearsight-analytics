@@ -7,19 +7,22 @@ data/processed/*.json
 data/processed/*.parquet
 *.zip
 *.tar.gz
-
+*.png
+*.jpg
 # Image datasets
-data/raw/images/
+data/raw/*
 data/processed/images/
 
 # Model weights and artifacts
 models/*/saved_model/*.joblib
 models/*/saved_model/*.pkl
+models/*/saved_model/*.pt
 models/*/saved_model/*.h5
 models/*/saved_model/*.keras
 models/*/saved_model/*.safetensors
 models/*/saved_model/*.bin
 models/*/saved_model/*.onnx
+models/*/*.keras
 
 # Test data (provided by instructor)
 test_data/*.csv
@@ -55,5 +58,20 @@ env/
 
 # Logs
 *.log
+logs/
 wandb/
 runs/
+data/raw/healthcare_retinal_images/
+# ClearSight Specific
+*.png
+*.PNG
+saved_model/
+logs/
+.env
+.claude/scheduled_tasks.lock
+.claude/settings.local.json
+generate_model4_report.py
+
+# Streamlit secrets
+.streamlit/secrets.toml
+.streamlit/secrets.toml.backup

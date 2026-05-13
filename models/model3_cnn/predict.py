@@ -1,79 +1,95 @@
-#!/usr/bin/env python3
-"""
-Model 3: CNN — Prediction Script
-==================================
-Loads your trained model and generates predictions on test data.
-
-Usage: python predict.py
-Output: test_data/model3_results.csv
-"""
+import sys
 import pandas as pd
+import numpy as np
 from pathlib import Path
+import tensorflow as tf
+from keras.applications.resnet50 import preprocess_input
 
-# Paths
-MODEL_PATH = Path("models/model3_cnn/saved_model/")
-TEST_DATA_DIR = Path("test_data/")
-OUTPUT_FILE = TEST_DATA_DIR / "model3_results.csv"
+PROJECT_ROOT    = Path(__file__).resolve().parents[2]
+MODEL_PATH      = Path(__file__).resolve().parent / "saved_model"
+TEST_DATA_DIR   = PROJECT_ROOT / "test_data"
+OUTPUT_FILE     = TEST_DATA_DIR / "model3_results.csv"
+
+HF_REPO      = "whoukcode/finalcapstone"
+HF_SUBFOLDER = "model3_cnn/saved_model"
+
+
+def ensure_model_files():
+    """Download all saved_model files from HuggingFace if any are missing."""
+    if not (MODEL_PATH / "best_model.keras").exists():
+        print("Model files not found locally — downloading from HuggingFace...")
+        try:
+            from huggingface_hub import snapshot_download
+            snapshot_download(
+                repo_id=HF_REPO,
+                allow_patterns=[f"{HF_SUBFOLDER}/*"],
+                local_dir=str(PROJECT_ROOT / "models"),
+            )
+            print("Download complete.")
+        except Exception as e:
+            raise RuntimeError(
+                f"Could not download model files from HuggingFace ({HF_REPO}). Error: {e}"
+            )
 
 
 def load_model():
-    """Load your trained CNN model from saved_model/.
-
-    TensorFlow / Keras:
-        import tensorflow as tf
-        model = tf.keras.models.load_model(MODEL_PATH / "model.keras")
-    """
-    # TODO: Load your saved model
-    raise NotImplementedError("Load your trained model here")
-
-
-def load_and_preprocess_images(image_dir):
-    """Load images from the test_data/ image folder and apply transforms.
-
-    Example using Keras:
-        from tensorflow.keras.preprocessing.image import load_img, img_to_array
-        import numpy as np
-
-        images, ids = [], []
-        for img_path in sorted(Path(image_dir).glob("*.png")):
-            img = load_img(img_path, target_size=(224, 224))
-            img_array = img_to_array(img) / 255.0
-            images.append(img_array)
-            ids.append(img_path.name)
-        return np.array(images), ids
-    """
-    # TODO: Load and preprocess images
-    raise NotImplementedError("Load and preprocess images here")
+    ensure_model_files()
+    model = tf.keras.models.load_model(
+        MODEL_PATH / "best_model.keras",
+        compile=False
+    )
+    print("Model loaded.")
+    return model
 
 
-def predict(model, images):
-    """Generate predictions on image data.
+def load_images(image_paths):
+    images    = []
+    valid_ids = []
 
-    Should return a DataFrame with columns: image_id, predicted_class, confidence
-    """
-    # TODO: Run your model on the images
-    raise NotImplementedError("Generate predictions here")
+    for img_id, path in image_paths.items():
+        try:
+            img = tf.keras.utils.load_img(path, target_size=(224, 224))
+        except Exception as e:
+            print(f"WARNING: Could not load {path}: {e}")
+            continue
+
+        img = tf.keras.utils.img_to_array(img)
+        img = preprocess_input(img)
+
+        images.append(img)
+        valid_ids.append(img_id)
+
+    return np.array(images), valid_ids
+
+
+def predict(model, images, image_ids):
+    preds = model(images).numpy()
+
+    predicted_classes  = (preds > 0.5).astype(int).flatten()
+    confidence_scores  = np.where(preds.flatten() > 0.5, preds.flatten(), 1 - preds.flatten())
+
+    return pd.DataFrame({
+        "image_id":        image_ids,
+        "predicted_class": predicted_classes,
+        "confidence":      confidence_scores,
+    })
 
 
 def main():
-    # Load model
     model = load_model()
 
-    # Load test images from test_data/ image folder
-    # TODO: Update this path to match your test image folder
-    # images, image_ids = load_and_preprocess_images(TEST_DATA_DIR / "images")
+    test_image_dir    = TEST_DATA_DIR / "images"
+    VALID_EXTENSIONS  = {".png", ".jpg", ".jpeg"}
 
-    # Generate predictions
-    # predictions = predict(model, images)
+    image_paths = {
+        img_path.name: img_path
+        for img_path in sorted(test_image_dir.glob("*.*"))
+        if img_path.suffix.lower() in VALID_EXTENSIONS
+    }
 
-    # Save results — MUST match output template exactly
-    # results = pd.DataFrame({
-    #     "image_id": image_ids,
-    #     "predicted_class": predicted_classes,
-    #     "confidence": confidence_scores,
-    # })
-    # results.to_csv(OUTPUT_FILE, index=False)
-
+    images, image_ids = load_images(image_paths)
+    results = predict(model, images, image_ids)
+    results.to_csv(OUTPUT_FILE, index=False)
     print(f"Predictions saved to {OUTPUT_FILE}")
 
 
