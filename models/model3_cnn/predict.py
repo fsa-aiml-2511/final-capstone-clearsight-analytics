@@ -1,19 +1,39 @@
+import sys
 import pandas as pd
 import numpy as np
 from pathlib import Path
 import tensorflow as tf
-from keras.preprocessing.image import load_img, img_to_array
 from keras.applications.resnet50 import preprocess_input
-# Paths
-MODEL_PATH = Path("models/model3_cnn/saved_model/")
-TEST_DATA_DIR = Path("test_data/")
-OUTPUT_FILE = TEST_DATA_DIR / "model3_results.csv"
+
+PROJECT_ROOT    = Path(__file__).resolve().parents[2]
+MODEL_PATH      = Path(__file__).resolve().parent / "saved_model"
+TEST_DATA_DIR   = PROJECT_ROOT / "test_data"
+OUTPUT_FILE     = TEST_DATA_DIR / "model3_results.csv"
+
+HF_REPO      = "whoukcode/finalcapstone"
+HF_SUBFOLDER = "model3_cnn/saved_model"
 
 
-# ---------------------------------------------------------
-# 1. Load trained model (Keras 3 compatible)
-# ---------------------------------------------------------
+def ensure_model_files():
+    """Download all saved_model files from HuggingFace if any are missing."""
+    if not (MODEL_PATH / "best_model.keras").exists():
+        print("Model files not found locally — downloading from HuggingFace...")
+        try:
+            from huggingface_hub import snapshot_download
+            snapshot_download(
+                repo_id=HF_REPO,
+                allow_patterns=[f"{HF_SUBFOLDER}/*"],
+                local_dir=str(PROJECT_ROOT / "models"),
+            )
+            print("Download complete.")
+        except Exception as e:
+            raise RuntimeError(
+                f"Could not download model files from HuggingFace ({HF_REPO}). Error: {e}"
+            )
+
+
 def load_model():
+    ensure_model_files()
     model = tf.keras.models.load_model(
         MODEL_PATH / "best_model.keras",
         compile=False
@@ -21,12 +41,10 @@ def load_model():
     print("Model loaded.")
     return model
 
-# ---------------------------------------------------------
-# 2. Load + preprocess test images (224×224)
-# ---------------------------------------------------------
+
 def load_images(image_paths):
-    images = []          
-    valid_ids = []       
+    images    = []
+    valid_ids = []
 
     for img_id, path in image_paths.items():
         try:
@@ -41,36 +59,27 @@ def load_images(image_paths):
         images.append(img)
         valid_ids.append(img_id)
 
-    return np.array(images), valid_ids   
+    return np.array(images), valid_ids
 
 
-# ---------------------------------------------------------
-# 3. Generate predictions
-# ---------------------------------------------------------
 def predict(model, images, image_ids):
     preds = model(images).numpy()
 
-    predicted_classes = (preds > 0.5).astype(int).flatten()
-    confidence_scores = np.where(preds.flatten() > 0.5, preds.flatten(), 1 - preds.flatten())
+    predicted_classes  = (preds > 0.5).astype(int).flatten()
+    confidence_scores  = np.where(preds.flatten() > 0.5, preds.flatten(), 1 - preds.flatten())
 
-    df = pd.DataFrame({
-        "image_id": image_ids,
+    return pd.DataFrame({
+        "image_id":        image_ids,
         "predicted_class": predicted_classes,
-        "confidence": confidence_scores,
+        "confidence":      confidence_scores,
     })
 
-    return df
 
-# ---------------------------------------------------------
-# 4. Main pipeline
-# ---------------------------------------------------------
 def main():
-    # Load model
     model = load_model()
 
-    # Load test images
-    test_image_dir = TEST_DATA_DIR / "images"
-    VALID_EXTENSIONS = {".png", ".jpg", ".jpeg"}
+    test_image_dir    = TEST_DATA_DIR / "images"
+    VALID_EXTENSIONS  = {".png", ".jpg", ".jpeg"}
 
     image_paths = {
         img_path.name: img_path
@@ -79,17 +88,10 @@ def main():
     }
 
     images, image_ids = load_images(image_paths)
-
-    # Generate predictions
     results = predict(model, images, image_ids)
-
-    # Save results
     results.to_csv(OUTPUT_FILE, index=False)
     print(f"Predictions saved to {OUTPUT_FILE}")
 
 
 if __name__ == "__main__":
     main()
-
-   
-    
