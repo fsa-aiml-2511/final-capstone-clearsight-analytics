@@ -6,11 +6,12 @@
 [![Streamlit](https://img.shields.io/badge/Streamlit-1.32%2B-FF4B4B?logo=streamlit&logoColor=white)](https://streamlit.io/)
 [![XGBoost](https://img.shields.io/badge/XGBoost-Ensemble-red)](https://xgboost.readthedocs.io/)
 [![TensorFlow](https://img.shields.io/badge/TensorFlow-2.15-FF6F00?logo=tensorflow&logoColor=white)](https://www.tensorflow.org/)
-[![PyTorch](https://img.shields.io/badge/PyTorch-LSTM-EE4C2C?logo=pytorch&logoColor=white)](https://pytorch.org/)
+[![PyTorch](https://img.shields.io/badge/PyTorch-BioBERT-EE4C2C?logo=pytorch&logoColor=white)](https://pytorch.org/)
+[![HuggingFace](https://img.shields.io/badge/HuggingFace-BioBERT-FFD21E?logo=huggingface&logoColor=black)](https://huggingface.co/whoukcode/finalcapstone)
 [![Groq](https://img.shields.io/badge/Groq-Llama_3.1-f59e0b)](https://groq.com/)
 [![License](https://img.shields.io/badge/License-Academic-lightgrey)](LICENSE)
 
-**ClearSight Analytics** is a high-fidelity multimodal AI platform designed to assist healthcare professionals in high-stakes clinical decision-making. It combines traditional machine learning, deep learning, computer vision, NLP, and generative AI to provide a 360-degree risk assessment of diabetic patients — from hospital readmission probability to retinal complication screening.
+**ClearSight Analytics** is a high-fidelity multimodal AI platform designed to assist healthcare professionals in high-stakes clinical decision-making. It combines traditional machine learning, deep learning, computer vision, NLP, and generative AI to provide a 360-degree risk assessment of diabetic patients — from hospital readmission probability to retinal complication screening and AI-powered drug recommendations.
 
 > ⚠️ **This is an academic Capstone Project.** It is not a certified medical device and must not be used for real clinical diagnosis.
 
@@ -18,18 +19,21 @@
 
 ## ✨ Key Features
 
-- **5 Specialized AI Models** running in parallel on a single inference request
+- **6 Specialized AI Models** running across a single unified inference pipeline
+- **BioBERT (LoRA) NLP** — 110M-parameter biomedical transformer classifying drug effectiveness from patient reviews with 90% accuracy
+- **Drug Effectiveness Recommender** — innovation engine surfacing ranked alternative medications based on 192,482 patient-reported outcomes
 - **Grad-CAM Explainability** — visual heatmaps highlighting pathological retinal regions
-- **AI Clinical Copilot** — context-aware LLM (Llama 3.1) that injects live patient metrics into every prompt
+- **AI Clinical Copilot** — context-aware LLM (Llama 3.1) that injects live patient metrics, model outputs, and drug recommendations into every prompt
 - **Quick Load Presets** — 5 pre-built clinical scenarios for rapid demo and testing
-- **EHR Export** — one-click Markdown clinical summary ready for copy-paste into medical records
+- **EHR Export** — one-click Markdown clinical summary including drug recommendation output
 - **Clinical Safety Guardrails** — mandatory disclaimers, `temperature=0.2` lock, and OOD warnings on all AI outputs
+- **Zero-setup model loading** — all model weights auto-downloaded from HuggingFace on first run
 
 ---
 
 ## 🏛️ System Architecture
 
-The platform operates on a **Consensus Inference Engine**, integrating five specialized models:
+The platform operates on a **Consensus Inference Engine**, integrating six specialized models:
 
 ### Tier 1 — Predictive Risk (M1 & M2)
 | Model | Type | Task |
@@ -43,14 +47,44 @@ The platform operates on a **Consensus Inference Engine**, integrating five spec
 | **M3** | ResNet50 CNN | Diabetic Retinopathy screening from fundus photographs |
 | **Grad-CAM** | Explainable AI | Activation heatmaps over hemorrhages, exudates, and microaneurysms |
 
-### Tier 3 — NLP & Operations (M4 & M5)
+### Tier 3 — NLP, Operations & Innovation (M4, M5, M6)
 | Model | Type | Task |
 |-------|------|------|
-| **M4** | Meta LSTM (PyTorch) | Clinical note sentiment + qualitative risk signal detection |
+| **M4** | BioBERT (LoRA) + Drug/Condition Embeddings | Clinical note sentiment + medication effectiveness classification |
 | **M5** | Capacity Classifier | Length of Stay (LOS) prediction for bed management |
+| **M6** | Drug Effectiveness Recommender | Ranks alternative drugs by patient-reported outcomes per condition |
 
 ### Tier 4 — Generative AI Copilot
-Powered by **Llama 3.1-8b-instant via Groq API** for sub-second latency. Dynamically injects live patient metrics and all five model outputs into the LLM context to generate personalized discharge protocols, risk driver rankings, and clinical syntheses.
+Powered by **Llama 3.1-8b-instant via Groq API** for sub-second latency. Dynamically injects live patient metrics, all model outputs, and drug recommendation rankings into the LLM context to generate personalized discharge protocols, risk driver rankings, and clinical syntheses.
+
+---
+
+## 🧠 Model 4 — BioBERT (LoRA) NLP Classifier
+
+The NLP model is the most technically sophisticated component of the system.
+
+- **Base model:** `dmis-lab/biobert-base-cased-v1.2` — 110M parameters pretrained on PubMed abstracts and PMC full-text biomedical literature
+- **Fine-tuning:** LoRA (Low-Rank Adaptation) applied to Q and V attention projections — only **0.87% of parameters train** (~948k of 110M), preventing overfitting
+- **Metadata conditioning:** Drug and condition embeddings (32-dim each) allow the same review text to be interpreted differently depending on which medication is being discussed
+- **Training data:** 192,482 patient medication reviews across 3,570 drugs and 906 conditions
+- **Performance:** Weighted F1 = **0.9018**, Accuracy = **90%**
+- **Classes:** Highly Effective / Somewhat Effective / Ineffective
+
+All model weights are hosted on [HuggingFace](https://huggingface.co/whoukcode/finalcapstone) and downloaded automatically on first run — no manual setup required.
+
+---
+
+## 💊 Model 6 — Drug Effectiveness Recommender (Innovation)
+
+Built on top of M4's predictions, this innovation engine pre-computes drug effectiveness rankings from 192,482 patient reviews and surfaces ranked alternatives whenever a drug classification is made.
+
+- Requires a minimum of **20 patient reviews** per drug/condition combination for inclusion
+- Ranking uses a weighted effectiveness score: `Highly Effective × 1.0 + Somewhat Effective × 0.5`
+- Always displayed in the webapp — heading adapts to the M4 result:
+  - *"Metformin was Ineffective for Diabetes, Type 2 — Recommended Alternatives Likely to Produce Better Outcomes"*
+  - *"Metformin was Highly Effective — Other Drugs That Have Also Shown Strong Results"*
+- Rankings CSV hosted on HuggingFace and auto-downloaded by the app on startup
+- Drug recommendations are injected into the AI Copilot context and clinical report export
 
 ---
 
@@ -71,16 +105,18 @@ Powered by **Llama 3.1-8b-instant via Groq API** for sub-second latency. Dynamic
 ```
 final-capstone-clearsight-analytics/
 ├── webapp/
-│   └── app.py                    # Main Streamlit application (~5 000 lines)
+│   └── app.py                    # Main Streamlit application
 ├── models/
 │   ├── model1_traditional_ml/    # XGBoost readmission ensemble
 │   ├── model2_deep_learning/     # Keras DNN readmission model
 │   ├── model3_cnn/               # ResNet50 retinal screening + Grad-CAM
-│   ├── model4_nlp_classification/# Meta LSTM clinical note analysis
-│   └── model5_innovation/        # LOS / capacity planning classifier
+│   ├── model4_nlp_classification/# BioBERT (LoRA) clinical NLP classifier
+│   ├── model5_innovation/        # LOS / capacity planning classifier
+│   └── model6_innovation/        # Drug effectiveness recommender
 ├── pipelines/                    # Data cleaning & feature engineering
 ├── notebooks/                    # EDA notebooks per team member
 ├── data/processed/               # Processed datasets (gitignored)
+├── test_data/                    # Model prediction outputs
 ├── output_templates/             # Per-model result CSV templates
 ├── requirements.txt
 └── README.md
@@ -130,6 +166,8 @@ streamlit run webapp/app.py
 
 Navigate to `http://localhost:8501` in your browser.
 
+> **Note:** On first run, the app will automatically download all model weights and the drug rankings CSV from HuggingFace (`whoukcode/finalcapstone`). The BioBERT model is ~435 MB — allow 1–2 minutes for the initial download.
+
 ---
 
 ## 🛠️ Technical Stack
@@ -140,7 +178,8 @@ Navigate to `http://localhost:8501` in your browser.
 | ML — Tabular | XGBoost, scikit-learn, joblib |
 | ML — Deep Learning | TensorFlow / Keras 2.15 |
 | ML — Computer Vision | PyTorch, torchvision (ResNet50), OpenCV |
-| ML — NLP | PyTorch LSTM, custom tokenizer |
+| ML — NLP | PyTorch, HuggingFace Transformers, BioBERT (LoRA) |
+| Model Hosting | HuggingFace Hub (auto-download on first run) |
 | Generative AI | Llama 3.1 via Groq API (OpenAI-compatible client) |
 | Data Processing | pandas, NumPy, scikit-learn pipelines |
 | Explainability | Grad-CAM (manual implementation, no third-party lib) |
