@@ -16,11 +16,14 @@ data/processed/images/
 # Model weights and artifacts
 models/*/saved_model/*.joblib
 models/*/saved_model/*.pkl
+models/*/saved_model/*.pt
 models/*/saved_model/*.h5
 models/*/saved_model/*.keras
 models/*/saved_model/*.safetensors
 models/*/saved_model/*.bin
 models/*/saved_model/*.onnx
+models/*/saved_model/NOT_USED
+models/*/saved_model/USED
 
 # Test data (provided by instructor)
 test_data/*.csv
@@ -63,9 +66,12 @@ data/raw/healthcare_retinal_images/
 # ClearSight Specific
 *.png
 *.PNG
-saved_model/
+#saved_model/
 logs/
 .env
+.claude/scheduled_tasks.lock
+.claude/settings.local.json
+generate_model4_report.py
 
 # Streamlit secrets
 .streamlit/secrets.toml
