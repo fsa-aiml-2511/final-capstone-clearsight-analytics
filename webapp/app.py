@@ -68,6 +68,7 @@ M2_DIR = PROJECT_ROOT / "models" / "model2_deep_learning" / "saved_model"
 M3_DIR = PROJECT_ROOT / "models" / "model3_cnn" / "saved_model"              # CNN Retinal (Doug)
 M4_DIR = PROJECT_ROOT / "models" / "model4_nlp_classification" / "saved_model" # NLP (Wes)
 M5_DIR = PROJECT_ROOT / "models" / "model5_innovation" / "saved_model"       # Capacity Planning
+M6_RESULTS = PROJECT_ROOT / "test_data" / "model6_results.csv"
 
 def inject_sidebar_styles() -> None:
     """Injects custom CSS to style the sidebar as a dark-mode SaaS navigation menu.
@@ -869,142 +870,165 @@ class Vocabulary:
 
 
 
+@st.cache_data(show_spinner=False)
+def load_m6_rankings() -> pd.DataFrame:
+    if not M6_RESULTS.exists():
+        try:
+            from huggingface_hub import hf_hub_download
+            logger.info("model6_results.csv not found locally — downloading from HuggingFace...")
+            hf_hub_download(
+                repo_id="whoukcode/finalcapstone",
+                filename="model6_results.csv",
+                local_dir=str(M6_RESULTS.parent),
+            )
+        except Exception as e:
+            logger.error("Failed to download model6_results.csv from HuggingFace: %s", e)
+            return pd.DataFrame()
+    return pd.read_csv(M6_RESULTS)
+
+
+def get_m6_recommendations(condition: str, current_drug: str, top_n: int = 5) -> pd.DataFrame:
+    """Return top_n alternative drugs for a condition, excluding current_drug."""
+    df = load_m6_rankings()
+    if df.empty:
+        return df
+    matches = df[df["condition"].str.lower() == condition.strip().lower()].copy()
+    if current_drug.strip():
+        matches = matches[matches["urlDrugName"].str.lower() != current_drug.strip().lower()]
+    return matches.head(top_n)
+
+
 @st.cache_resource(show_spinner=False)
 def load_model4() -> tuple[Any, Any, Any, Any, Any]:
     import torch
     import torch.nn as nn
-    
-    class MetaLSTMClassifier(nn.Module):
-        # Ajustamos los parámetros base para coincidir con las dimensiones de Wes
-        def __init__(self, vocab_size, num_drugs, num_conditions, embed_dim=128, 
-                     hidden_dim=128, meta_embed_dim=32, num_classes=3, dropout=0.3):
-            super().__init__()
-            # Wes lo llamó 'text_embedding', no 'embedding'
-            self.text_embedding = nn.Embedding(vocab_size, embed_dim, padding_idx=0)
-            
-            # Wes usó num_layers=2 y hidden_dim=128 (se nota por los pesos de 512)
-            self.lstm = nn.LSTM(embed_dim, hidden_dim, num_layers=2, batch_first=True, bidirectional=True)
-            
-            # Ajustamos el tamaño del embedding a 32
-            self.drug_embedding = nn.Embedding(num_drugs, meta_embed_dim)
-            self.condition_embedding = nn.Embedding(num_conditions, meta_embed_dim)
-            self.dropout = nn.Dropout(dropout)
-            
-            # hidden_dim * 2 (bidirectional) + meta_embed_dim * 2
-            # 128 * 2 + 32 * 2 = 256 + 64 = 320 (Coincide con fc.weight: [3, 320])
-            self.fc = nn.Linear(hidden_dim * 2 + meta_embed_dim * 2, num_classes)
+    from transformers import AutoTokenizer, AutoModel
+    from huggingface_hub import hf_hub_download
 
-        def forward(self, text_seq, text_lengths, drug_idx, cond_idx):
-            embedded = self.text_embedding(text_seq)
-            
-            packed_embedded = nn.utils.rnn.pack_padded_sequence(
-                embedded, text_lengths.cpu(), batch_first=True, enforce_sorted=False
-            )
-            packed_output, (hidden, cell) = self.lstm(packed_embedded)
-            
-            # Extraer el hidden state de la última capa (num_layers=2) de ambas direcciones
-            hidden = self.dropout(torch.cat((hidden[-2,:,:], hidden[-1,:,:]), dim=1))
-            
+    HF_REPO = "whoukcode/finalcapstone"
+
+    def get_model_file(filename):
+        local_path = M4_DIR / filename
+        if not local_path.exists():
+            logger.info("%s not found locally — downloading from HuggingFace...", filename)
+            try:
+                hf_hub_download(repo_id=HF_REPO, filename=filename, local_dir=str(M4_DIR))
+            except Exception as e:
+                raise RuntimeError(
+                    "Could not find '" + filename + "' locally or download from HuggingFace ("
+                    + HF_REPO + "). Error: " + str(e)
+                )
+        return local_path
+
+    class BioBERTMetadataClassifier(nn.Module):
+        def __init__(self, biobert_name, num_drugs, num_conditions,
+                     meta_embed_dim=32, hidden_dim=256, num_classes=3, dropout=0.3):
+            super().__init__()
+            self.bert                = AutoModel.from_pretrained(biobert_name)
+            self.drug_embedding      = nn.Embedding(num_drugs,      meta_embed_dim)
+            self.condition_embedding = nn.Embedding(num_conditions, meta_embed_dim)
+            combined_dim = 768 + meta_embed_dim * 2
+            self.norm    = nn.LayerNorm(combined_dim)
+            self.proj    = nn.Linear(combined_dim, hidden_dim)
+            self.dropout = nn.Dropout(dropout)
+            self.fc      = nn.Linear(hidden_dim, num_classes)
+
+        @staticmethod
+        def _mean_pool(last_hidden_state, attention_mask):
+            mask   = attention_mask.unsqueeze(-1).float()
+            summed = (last_hidden_state * mask).sum(dim=1)
+            return summed / mask.sum(dim=1).clamp(min=1)
+
+        def forward(self, input_ids, attention_mask, drug_idx, cond_idx):
+            outputs  = self.bert(input_ids=input_ids, attention_mask=attention_mask)
+            text_out = self._mean_pool(outputs.last_hidden_state, attention_mask)
             drug_out = self.drug_embedding(drug_idx)
             cond_out = self.condition_embedding(cond_idx)
-            
-            combined = torch.cat([hidden, drug_out, cond_out], dim=1)
+            combined = torch.cat([text_out, drug_out, cond_out], dim=1)
+            combined = self.norm(combined)
+            combined = torch.nn.functional.gelu(self.proj(combined))
             return self.fc(self.dropout(combined))
 
     t0 = time.perf_counter()
-    logger.info("Loading Model 4 (Meta LSTM) artifacts from %s", M4_DIR)
-    
+    logger.info("Loading Model 4 (BioBERT) artifacts from %s", M4_DIR)
+
     try:
-        drug_le = joblib.load(M4_DIR / "drug_encoder.joblib")
-        cond_le = joblib.load(M4_DIR / "condition_encoder.joblib")
-        label_le = joblib.load(M4_DIR / "label_encoder_meta.joblib")
-        vocab = joblib.load(M4_DIR / "vocab_pretrained.joblib")
+        drug_le  = joblib.load(get_model_file("drug_encoder.joblib"))
+        cond_le  = joblib.load(get_model_file("condition_encoder.joblib"))
+        label_le = joblib.load(get_model_file("label_encoder_biobert_lora_all_combos.joblib"))
 
-        model = MetaLSTMClassifier(
-            vocab_size=len(vocab),
-            num_drugs=len(drug_le.classes_),
-            num_conditions=len(cond_le.classes_)
+        biobert_name = "dmis-lab/biobert-base-cased-v1.2"
+        tokenizer = AutoTokenizer.from_pretrained(biobert_name)
+
+        model = BioBERTMetadataClassifier(
+            biobert_name   = biobert_name,
+            num_drugs      = len(drug_le.classes_),
+            num_conditions = len(cond_le.classes_),
         )
-
-        model.load_state_dict(torch.load(M4_DIR / "model_meta_lstm.pt", map_location="cpu"))
+        model.load_state_dict(torch.load(get_model_file("model_biobert_lora_all_combos.pt"), map_location="cpu"))
         model.eval()
-        
+
     except Exception:
-        logger.error("Failed to load Model 4 artifacts", exc_info=True)
+        logger.error("Failed to load Model 4 (BioBERT) artifacts", exc_info=True)
         raise
-        
-    logger.info("Model 4 loaded in %.0f ms", (time.perf_counter() - t0) * 1000)
-    return model, vocab, drug_le, cond_le, label_le
+
+    logger.info("Model 4 (BioBERT) loaded in %.0f ms", (time.perf_counter() - t0) * 1000)
+    return model, tokenizer, drug_le, cond_le, label_le
 
 
 def predict_m4(text_notes: str, drug_name: str, condition: str) -> tuple[str, float, str, str]:
-    """Runs NLP inference using the cached Meta LSTM Classifier."""
+    """Runs NLP inference using the cached BioBERT Classifier."""
     logger.info("M4 prediction triggered — drug=%s condition=%s", drug_name, condition)
     import torch
-    import re
-    
-    model, vocab, drug_le, cond_le, label_le = load_model4()
+
+    model, tokenizer, drug_le, cond_le, label_le = load_model4()
 
     def safe_encode(le: Any, val: str) -> int:
         return le.transform([val if val in le.classes_ else "unknown"])[0]
 
-    # 1. Encode Metadata
+    # 1. Encode metadata
     drug_idx = torch.tensor([safe_encode(drug_le, drug_name)], dtype=torch.long)
     cond_idx = torch.tensor([safe_encode(cond_le, condition)], dtype=torch.long)
-    
-    # 2. Text Preprocessing & Tokenization (Simple whitespace/regex tokenizer for LSTM)
-    text = text_notes.lower()
-    text = re.sub(r'[^a-z0-9\s]', '', text)
-    tokens = text.split()
-    
-    # Map words to indices, cap at max_length (e.g., 256)
-    max_len = 256
-    seq = [vocab.get(word, vocab.get("<unk>", 1)) for word in tokens]
-    
-    if len(seq) == 0:
-        seq = [vocab.get("<pad>", 0)] # Fallback if empty
-        
-    seq_length = torch.tensor([min(len(seq), max_len)], dtype=torch.long)
-    
-    # Pad or truncate sequence
-    if len(seq) < max_len:
-        seq = seq + [vocab.get("<pad>", 0)] * (max_len - len(seq))
-    else:
-        seq = seq[:max_len]
-        
-    text_tensor = torch.tensor([seq], dtype=torch.long)
 
-    # 3. Model Forward Pass
+    # 2. Tokenize raw text (BioBERT handles its own tokenization — no preprocessing)
+    enc = tokenizer(
+        str(text_notes),
+        max_length=256,
+        padding="max_length",
+        truncation=True,
+        return_tensors="pt",
+    )
+    input_ids = enc["input_ids"]
+    attn_mask = enc["attention_mask"]
+
+    # 3. Model forward pass
     with torch.no_grad():
-        logits = model(text_tensor, seq_length, drug_idx, cond_idx)
-        probs = torch.softmax(logits, dim=1).numpy()[0]
-        pred_idx = np.argmax(probs)
-        
-    label = label_le.inverse_transform([pred_idx])[0]
+        logits = model(input_ids, attn_mask, drug_idx, cond_idx)
+        probs  = torch.softmax(logits, dim=1).numpy()[0]
+        pred_idx = int(np.argmax(probs))
+
+    label      = label_le.inverse_transform([pred_idx])[0]
     confidence = float(probs[pred_idx])
     logger.info("M4 result — label=%s confidence=%.4f", label, confidence)
 
     explanation_map = {
         "Ineffective":        "Critical Interpretation: Linguistic markers suggest severe symptoms, treatment failure, or a potential emergency. Immediate review advised.",
         "Somewhat Effective": "Elevated Interpretation: Linguistic markers indicate lingering symptoms or an incomplete response to current treatment context.",
-        "Effective":          "Stable Interpretation: Linguistic markers indicate a positive response to treatment and stable patient condition.",
+        "Highly Effective":   "Stable Interpretation: Linguistic markers indicate a positive response to treatment and stable patient condition.",
     }
     css_map = {
         "Ineffective":        "risk-high",
         "Somewhat Effective": "risk-medium",
-        "Effective":          "risk-low",
+        "Highly Effective":   "risk-low",
     }
-    
     display_map = {
         "Ineffective":        "CRITICAL",
         "Somewhat Effective": "ELEVATED",
-        "Effective":          "STABLE",
+        "Highly Effective":   "STABLE",
     }
-    
-    explanation = explanation_map.get(label, "Interpretation unavailable for this label.")
 
+    explanation   = explanation_map.get(label, "Interpretation unavailable for this label.")
     display_title = display_map.get(label, label.upper())
-    
 
     return f"{display_title} RISK SENTIMENT", confidence, css_map.get(label, "risk-low"), explanation
 
@@ -1439,6 +1463,13 @@ def render_sidebar() -> str:
         except Exception:
             logger.error("Sidebar status check: Model 5 unavailable", exc_info=True)
             st.markdown('<div class="status-row"><span><span style="color:#ef4444; margin-right:5px;">●</span> M5 · Innovation</span><span class="status-pill pill-error">ERROR</span></div>', unsafe_allow_html=True)
+
+        # Drug Recommendation (Model 6) — calling load_m6_rankings() triggers HF download if needed
+        _m6_status = load_m6_rankings()
+        if not _m6_status.empty:
+            st.markdown('<div class="status-row"><span><span style="color:#10b981; margin-right:5px;">●</span> Drug Recommendation</span><span class="status-pill pill-online">ONLINE</span></div>', unsafe_allow_html=True)
+        else:
+            st.markdown('<div class="status-row"><span><span style="color:#ef4444; margin-right:5px;">●</span> Drug Recommendation</span><span class="status-pill pill-error">OFFLINE</span></div>', unsafe_allow_html=True)
 
         # AI Copilot entry
         st.markdown(
@@ -2148,15 +2179,15 @@ def page_home() -> None:
         <div style="font-size:3rem;text-align:center;margin-bottom:16px;">💬</div>
         <div style="background:rgba(34,211,238,0.1);border:1px solid rgba(34,211,238,0.2);
                     border-radius:8px;padding:6px 12px;font-size:0.7rem;font-weight:600;
-                    color:#22d3ee;letter-spacing:0.5px;margin-bottom:12px;text-align:center;">MODEL 4 · BioBERT (LoRA) + LSTM</div>
+                    color:#22d3ee;letter-spacing:0.5px;margin-bottom:12px;text-align:center;">MODEL 4 · BioBERT (LoRA)</div>
         <h3 style="color:#e2e8f0;font-size:1.1rem;font-weight:600;margin-bottom:12px;text-align:center;">Medication Sentiment Analysis</h3>
         <p style="color:#94a3b8;font-size:0.85rem;line-height:1.5;margin-bottom:16px;">
           Classifies patient drug reviews into effectiveness categories using natural language processing.
         </p>
         <div style="background:rgba(30,41,59,0.4);border-radius:8px;padding:12px;margin-bottom:12px;">
           <div style="color:#64748b;font-size:0.7rem;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">ARCHITECTURE</div>
-          <div style="color:#5eead4;font-size:0.85rem;font-weight:600;">BioBERT (LoRA) &amp; LSTM</div>
-          <div style="color:#94a3b8;font-size:0.75rem;margin-top:2px;">10K vocab · Metadata embeddings · 3-class output</div>
+          <div style="color:#5eead4;font-size:0.85rem;font-weight:600;">BioBERT (LoRA)</div>
+          <div style="color:#94a3b8;font-size:0.75rem;margin-top:2px;">110M params · Drug &amp; condition embeddings · 3-class output</div>
         </div>
         <div style="background:rgba(34,211,238,0.05);border:1px solid rgba(34,211,238,0.15);border-radius:8px;padding:12px;">
           <div style="color:#64748b;font-size:0.7rem;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">CLINICAL VALUE</div>
@@ -2510,7 +2541,7 @@ def page_home() -> None:
                       border:1px solid rgba(34,211,238,0.2);border-radius:8px;
                       padding:6px 12px;font-size:0.75rem;font-weight:600;
                       color:#22d3ee;letter-spacing:0.5px;margin-bottom:16px;">
-            M4 &bull; BioBERT (LoRA) + LSTM
+            M4 &bull; BioBERT (LoRA)
           </div>
           <h3 style="margin:0 0 24px 0;font-size:1.25rem;font-weight:600;color:#e2e8f0;">
             NLP Notes &middot; Sentiment Analysis
@@ -2541,10 +2572,10 @@ def page_home() -> None:
             <div style="color:#64748b;font-size:0.7rem;font-weight:600;text-transform:uppercase;
                         letter-spacing:0.5px;margin-bottom:8px;">ARCHITECTURE</div>
             <div style="color:#5eead4;font-size:0.95rem;font-weight:600;margin-bottom:4px;">
-              BioBERT (LoRA) &amp; LSTM
+              BioBERT (LoRA)
             </div>
             <div style="color:#94a3b8;font-size:0.85rem;">
-              10K vocab &middot; Metadata embeddings
+              110M params &middot; Drug &amp; condition embeddings
             </div>
           </div>
         </div>
@@ -2881,7 +2912,7 @@ def page_predict() -> None:
     Presents a multi-section patient encounter form (demographics, clinical metrics,
     ICD-9 diagnoses, medications, clinical notes). On submission, runs Models 1, 2,
     4, and 5 in sequence and displays animated conic-gradient gauges for M1 / M2, a
-    capacity-planning card for M5, a Meta LSTM sentiment card for M4, and a consensus
+    capacity-planning card for M5, a BioBERT (LoRA) sentiment card for M4, and a consensus
     summary block with a clinical recommendation.
     """
     st.markdown("""
@@ -2916,7 +2947,7 @@ def page_predict() -> None:
             "med_spec": "Cardiology",
             "insulin": "Up", "metformin": "Steady", "change": "Ch",
             "diabetes_md": "Yes", "a1c": ">8", "max_glu": ">300",
-            "nlp_drug": "Insulin", "nlp_cond": "Heart Failure",
+            "nlp_drug": "Insulin", "nlp_cond": "Heart Attack",
             "clinical_notes": (
                 "Patient is a 74-year-old African American male admitted via ER with acute "
                 "decompensated heart failure. Patient appears disoriented and confused regarding "
@@ -2938,7 +2969,7 @@ def page_predict() -> None:
             "med_spec": "InternalMedicine",
             "insulin": "Steady", "metformin": "Steady", "change": "No",
             "diabetes_md": "Yes", "a1c": "Norm", "max_glu": "Norm",
-            "nlp_drug": "Metformin", "nlp_cond": "Diabetes",
+            "nlp_drug": "Metformin", "nlp_cond": "Diabetes, Type 2",
             "clinical_notes": (
                 "Patient is a 44-year-old female admitted for routine diabetes management review. "
                 "She reports excellent adherence to medication regimen and dietary plan. Blood glucose "
@@ -2959,7 +2990,7 @@ def page_predict() -> None:
             "med_spec": "InternalMedicine",
             "insulin": "Steady", "metformin": "Steady", "change": "Ch",
             "diabetes_md": "Yes", "a1c": ">7", "max_glu": ">200",
-            "nlp_drug": "Metformin", "nlp_cond": "Diabetes",
+            "nlp_drug": "Metformin", "nlp_cond": "Diabetes, Type 2",
             "clinical_notes": (
                 "Patient is a 63-year-old Hispanic male with Type 2 Diabetes and hypertension, "
                 "admitted urgently following blood glucose spike. Patient reports severe anxiety about "
@@ -2980,7 +3011,7 @@ def page_predict() -> None:
             "med_spec": "Nephrology",
             "insulin": "Up", "metformin": "No", "change": "Ch",
             "diabetes_md": "Yes", "a1c": ">8", "max_glu": ">300",
-            "nlp_drug": "Insulin", "nlp_cond": "Renal Failure",
+            "nlp_drug": "Insulin", "nlp_cond": "Diabetes, Type 2",
             "clinical_notes": (
                 "Patient is an 83-year-old female with complex comorbidities including Type 2 Diabetes "
                 "with renal complications, chronic kidney disease stage 3, and congestive heart failure. "
@@ -3002,7 +3033,7 @@ def page_predict() -> None:
             "med_spec": "Psychiatry",
             "insulin": "Steady", "metformin": "Steady", "change": "No",
             "diabetes_md": "Yes", "a1c": ">7", "max_glu": "None",
-            "nlp_drug": "Metformin", "nlp_cond": "Diabetes",
+            "nlp_drug": "sertraline", "nlp_cond": "Depression",
             "clinical_notes": (
                 "Patient is a 54-year-old male with a history of Type 2 Diabetes and major depressive "
                 "disorder, presenting to the ER for the fifth time this year. Patient expresses feelings "
@@ -3163,7 +3194,7 @@ def page_predict() -> None:
         with st.expander("📝 Clinical Notes Analysis (NLP Intelligence)", expanded=False):
             st.markdown("""
             <p style='font-size: 0.9rem; color: #94a3b8;'>
-                Enter physician progress notes or patient feedback. Meta LSTM will analyze 
+                Enter physician progress notes or patient feedback. BioBERT will analyze 
                 the linguistic sentiment in context with the medication and condition.
             </p>
             """, unsafe_allow_html=True)
@@ -3172,7 +3203,7 @@ def page_predict() -> None:
             col_n1, col_n2 = st.columns(2)
             nlp_drug = col_n1.text_input("Context Medication", value="Metformin",
                                          key="ti_nlp_drug")
-            nlp_cond = col_n2.text_input("Context Condition", value="Diabetes",
+            nlp_cond = col_n2.text_input("Context Condition", value="Diabetes, Type 2",
                                          key="ti_nlp_cond")
 
             clinical_notes = st.text_area(
@@ -3263,13 +3294,25 @@ def page_predict() -> None:
                 st.error("Capacity Planning model could not complete the prediction. The issue has been logged — please try again or contact support.")
 
         # ── Model 4 NLP ───────────────────────────────────────────────
-        with st.spinner("Analyzing clinical sentiment with Meta LSTM..."):
+        with st.spinner("Analyzing clinical sentiment with BioBERT (LoRA)..."):
             try:
                 nlp_label, nlp_conf, nlp_css, nlp_explanation = predict_m4(clinical_notes, nlp_drug, nlp_cond)
                 st.session_state["m4_result"] = {
                     "label": nlp_label, "conf": nlp_conf,
                     "css": nlp_css, "explanation": nlp_explanation,
                 }
+                # Store M6 recommendations alongside M4 result
+                _recs_df = get_m6_recommendations(nlp_cond, nlp_drug)
+                if not _recs_df.empty:
+                    _recs_text = "; ".join(
+                        f"#{int(r['rank'])} {r['urlDrugName']} ({r['pct_highly_effective']*100:.1f}% highly effective)"
+                        for _, r in _recs_df.iterrows()
+                    )
+                else:
+                    _recs_text = "No alternatives found with sufficient patient review data."
+                st.session_state["_syn_m6_drug"]  = nlp_drug
+                st.session_state["_syn_m6_cond"]  = nlp_cond
+                st.session_state["_syn_m6_recs"]  = _recs_text
             except Exception:
                 logger.error("M4 prediction failed", exc_info=True)
                 st.error("NLP Intelligence model could not complete the analysis. The issue has been logged — please try again or contact support.")
@@ -3435,7 +3478,7 @@ def page_predict() -> None:
         </div>""", unsafe_allow_html=True)
         st.markdown(f"""
         <div class="gcard">
-            <span class="tag">M4 · BioBERT (LoRA) + LSTM</span>
+            <span class="tag">M4 · BioBERT (LoRA)</span>
             <h3>Clinical Sentiment Analysis</h3>
             <div class="{r4['css']}" style="margin:1rem 0; padding:15px; font-size:1.1rem; border-radius:10px; text-align:center; font-weight:700;">
                 {r4['label']}
@@ -3450,6 +3493,70 @@ def page_predict() -> None:
                 <strong>Insight:</strong> {r4['explanation']}
             </p>
         </div>""", unsafe_allow_html=True)
+
+        # ── Model 6: Drug Recommendations ────────────────────────────
+        _m6_condition = st.session_state.get("ti_nlp_cond", "")
+        _m6_drug      = st.session_state.get("ti_nlp_drug", "")
+        _m6_recs      = get_m6_recommendations(_m6_condition, _m6_drug)
+
+        if _m6_recs.empty:
+            st.markdown(f"""
+            <div class="gcard" style="margin-top:1rem; opacity:0.7;">
+                <span class="tag">Innovation — Drug Recommendation</span>
+                <p style="color:#64748b; font-size:0.9rem; margin-top:0.75rem;">
+                    ⚠ Insufficient patient review data to recommend alternative drugs for
+                    <strong style="color:#94a3b8;">{_m6_condition}</strong>.
+                    Try a condition such as <em>Depression</em>, <em>Anxiety</em>, or <em>Diabetes, Type 2</em>.
+                </p>
+            </div>""", unsafe_allow_html=True)
+        else:
+            _css = r4.get("css", "risk-low")
+            _drug_name = _m6_drug.strip() if _m6_drug.strip() else "Drug"
+            _cond_name = _m6_condition.strip() if _m6_condition.strip() else "this condition"
+            if _css == "risk-high":
+                _rec_label   = f"{_drug_name} was Ineffective for {_cond_name}"
+                _rec_heading = "Recommended Alternatives Likely to Produce Better Outcomes"
+                _rec_color   = "#ef4444"
+            elif _css == "risk-medium":
+                _rec_label   = f"{_drug_name} was Somewhat Effective for {_cond_name}"
+                _rec_heading = "Drugs That May Produce Better Results for This Condition"
+                _rec_color   = "#f59e0b"
+            else:
+                _rec_label   = f"{_drug_name} was Highly Effective for {_cond_name}"
+                _rec_heading = "Other Drugs That Have Also Shown Strong Results for This Condition"
+                _rec_color   = "#10b981"
+
+            st.markdown(f"""
+            <div class="gcard" style="margin-top:1rem;">
+                <span class="tag">Innovation — Drug Recommendation</span>
+                <h3 style="color:{_rec_color}; margin-bottom:0.25rem;">{_rec_label}</h3>
+                <p style="color:#94a3b8; font-size:0.9rem; margin-bottom:1rem;">{_rec_heading}</p>
+            """, unsafe_allow_html=True)
+
+            for _, row in _m6_recs.iterrows():
+                he_pct  = row["pct_highly_effective"] * 100
+                se_pct  = row["pct_somewhat_effective"] * 100
+                in_pct  = row["pct_ineffective"] * 100
+                reviews = int(row["total_reviews"])
+                rank    = int(row["rank"])
+                st.markdown(f"""
+                <div style="background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08);
+                            border-radius:10px; padding:0.75rem 1rem; margin-bottom:0.5rem;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.4rem;">
+                        <span style="font-family:'JetBrains Mono'; font-weight:700; font-size:0.95rem; color:#e2e8f0;">
+                            #{rank} &nbsp; {row['urlDrugName']}
+                        </span>
+                        <span style="font-size:0.75rem; color:#64748b;">{reviews:,} reviews</span>
+                    </div>
+                    <div style="display:flex; gap:1rem; font-size:0.8rem;">
+                        <span style="color:#10b981;">✔ Highly Effective: {he_pct:.1f}%</span>
+                        <span style="color:#f59e0b;">~ Somewhat: {se_pct:.1f}%</span>
+                        <span style="color:#ef4444;">✗ Ineffective: {in_pct:.1f}%</span>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+
+            st.markdown("</div>", unsafe_allow_html=True)
 
     # ── Render persisted Consensus section ───────────────────────────
     if "_syn_p1" in st.session_state:
@@ -3635,6 +3742,11 @@ Generated: {__import__('datetime').datetime.now().strftime('%Y-%m-%d %H:%M')}
   NLP Confidence     : {_r4.get('conf', 0.0):.1%}
   Interpretation     : {_r4.get('explanation', 'N/A')}
 
+[DRUG RECOMMENDATION (Innovation)]
+  Drug Assessed      : {st.session_state.get('_syn_m6_drug', 'N/A')}
+  Condition          : {st.session_state.get('_syn_m6_cond', 'N/A')}
+  Top Alternatives   : {st.session_state.get('_syn_m6_recs', 'N/A')}
+
 [PHYSICIAN PROGRESS NOTE]
 {st.session_state.get('ta_clinical_notes', 'None provided')}
 
@@ -3643,7 +3755,7 @@ Generated: {__import__('datetime').datetime.now().strftime('%Y-%m-%d %H:%M')}
 
 =========================================
 ⚠ FOR INVESTIGATIONAL USE ONLY · NOT A CLINICAL DIAGNOSIS
-ClearSight Analytics · Powered by XGBoost, DNN, Meta-LSTM, Llama 3.1
+ClearSight Analytics · Powered by XGBoost, DNN, BioBERT (LoRA), Llama 3.1
 ========================================="""
 
             st.code(clinical_report, language="markdown")
@@ -3677,7 +3789,9 @@ ClearSight Analytics · Powered by XGBoost, DNN, Meta-LSTM, Llama 3.1
             f"  • Readmission Risk — Deep Neural Network (M2): {st.session_state['_syn_p2']*100:.1f}%\n"
             f"  • Predicted Length of Stay (M5 Capacity Classifier): {st.session_state['_syn_m5']}\n"
             f"  • Clinical Notes Sentiment Classification (NLP M4): {st.session_state['_syn_m4_label']}\n"
-            f"  • NLP Explanatory Context: {st.session_state['_syn_m4_expl']}\n\n"
+            f"  • NLP Explanatory Context: {st.session_state['_syn_m4_expl']}\n"
+            f"  • Drug Assessed (Innovation — Drug Recommendation): {st.session_state.get('_syn_m6_drug', 'N/A')} for {st.session_state.get('_syn_m6_cond', 'N/A')}\n"
+            f"  • Recommended Alternatives (ranked by patient-reported effectiveness): {st.session_state.get('_syn_m6_recs', 'N/A')}\n\n"
             "Respond only within the scope of these outputs and validated clinical evidence."
             " CRITICAL RULE: YOU MUST ALWAYS END EVERY RESPONSE WITH THIS EXACT TEXT: "
             "'\n\n\u26a0\ufe0f **Disclaimer:** This is an AI-generated analysis for investigational "
@@ -3767,13 +3881,17 @@ ClearSight Analytics · Powered by XGBoost, DNN, Meta-LSTM, Llama 3.1
                     f"- Primary ICD-9 Diagnosis: {st.session_state.get('ti_diag1', 'Unknown')}\n"
                     f"- Reported Drug (NLP input): {st.session_state.get('ti_nlp_drug', 'Unknown')}\n"
                     f"- Reported Condition (NLP input): {st.session_state.get('ti_nlp_cond', 'Unknown')}\n"
-                    f"- M4 Meta-LSTM Sentiment Label: {_m4r.get('label', st.session_state.get('_syn_m4_label', 'Unknown'))}\n"
+                    f"- M4 BioBERT Sentiment Label: {_m4r.get('label', st.session_state.get('_syn_m4_label', 'Unknown'))}\n"
                     f"- M4 Model Confidence: {_m4r.get('conf', 0)*100:.1f}%\n"
-                    f"- M4 Explanation: {_m4r.get('explanation', st.session_state.get('_syn_m4_expl', 'N/A'))}\n\n"
+                    f"- M4 Explanation: {_m4r.get('explanation', st.session_state.get('_syn_m4_expl', 'N/A'))}\n"
+                    f"- Drug Recommendation — Alternatives for {st.session_state.get('_syn_m6_cond', 'this condition')}: "
+                    f"{st.session_state.get('_syn_m6_recs', 'No recommendation data available.')}\n\n"
                     "Reference pertinent ICD-10-CM diagnostic categories, relevant comorbidity "
                     "indices (Charlson, LACE), and validated predictive scoring instruments. "
                     "Identify all NLP-flagged risk signals and their specific clinical significance "
-                    "for 30-day readmission risk."
+                    "for 30-day readmission risk. Based on the drug recommendation data provided, "
+                    "include a section recommending alternative medications and explain why each "
+                    "may produce better outcomes for this patient."
                 )
 
         with _qs_col2:
@@ -4023,7 +4141,7 @@ def page_insights() -> None:
 
     Organises content across five tabs: M1 XGBoost SHAP analysis (bar chart and
     summary plot), M2 DNN training curves and confusion matrix, M5 capacity-planning
-    metrics, M4 Meta LSTM architecture overview, and a side-by-side model comparison
+    metrics, M4 BioBERT (LoRA) architecture overview, and a side-by-side model comparison
     table. Diagnostic PNG artefacts are loaded from each model's ``saved_model``
     directory; missing files are handled with ``st.info`` fallbacks.
     """
@@ -4496,10 +4614,10 @@ def page_insights() -> None:
         st.markdown("""
         <div class="gcard" style="margin-bottom: 2rem; border-color: rgba(245,158,11,0.3);">
           <span class="tag" style="background: rgba(245,158,11,0.1); color: #f59e0b;">MULTIMODAL EXPANSION</span>
-          <h3 style="margin: 0.5rem 0;">BioBERT (LoRA) &amp; LSTM Clinical Sentiment Analysis</h3>
+          <h3 style="margin: 0.5rem 0;">BioBERT (LoRA) Clinical Sentiment Analysis</h3>
           <p style="color: #94a3b8; font-size: 0.9rem;">
             Structured EHR data often misses critical nuance hidden in physician progress notes. 
-            Model 4 utilizes a PyTorch MetaLSTMClassifier to extract linguistic risk markers 
+            Model 4 utilizes BioBERT (LoRA) — a 110M-parameter transformer pretrained on biomedical literature — to extract linguistic risk markers 
             (e.g., patient anxiety, medication non-compliance) and contextualizes them against specific drug and condition metadata.
           </p>
         </div>""", unsafe_allow_html=True)
